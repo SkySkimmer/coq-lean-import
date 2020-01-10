@@ -1,0 +1,6 @@
+profile=conventional
+cases-exp-indent=2
+exp-grouping=preserve
+indicate-multiline-delimiters=no
+leading-nested-match-parens
+let-and=sparse
