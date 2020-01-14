@@ -501,4 +501,23 @@ let import f =
       raise e
   in
   Feedback.msg_info
-    Pp.(str "Read " ++ int (N.Map.cardinal state.entries) ++ str " entries.")
+    Pp.(
+      str "Read "
+      ++ int (N.Map.cardinal state.entries)
+      ++ str " entries. Found "
+      ++ int (RRange.length state.univs)
+      ++ str " universe expressions, "
+      ++ int (N.Map.cardinal state.rev_univs)
+      ++ str " named universes,"
+      ++ int (RRange.length state.names)
+      ++ str " names and "
+      ++ int (RRange.length state.exprs)
+      ++ str " expression nodes.")
+
+(* Lean stdlib:
+- 10244 entries
+- 274 universe expressions
+- 28 named universes
+- 14091 names
+- 562009 expression nodes
+*)
