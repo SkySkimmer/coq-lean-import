@@ -122,31 +122,28 @@ let rec to_univ_level u uconv =
     | Max (a, b) ->
       let uconv, a = to_univ_level a uconv in
       let uconv, b = to_univ_level b uconv in
-      let n = UnivGen.fresh_level () in
-      let csts = uconv.csts in
-      let csts =
-        if Level.is_sprop a then csts else Constraint.add (a, Le, n) csts
-      in
-      let csts =
-        if Level.is_sprop b then csts else Constraint.add (b, Le, n) csts
-      in
-      let uconv = { map = U.Map.add u n uconv.map; csts } in
-      (uconv, n)
+      if Level.is_sprop a then (uconv, b)
+      else if Level.is_sprop b then (uconv, a)
+      else
+        let n = UnivGen.fresh_level () in
+        let csts = uconv.csts in
+        let csts = Constraint.add (a, Le, n) csts in
+        let csts = Constraint.add (b, Le, n) csts in
+        let uconv = { map = U.Map.add u n uconv.map; csts } in
+        (uconv, n)
     | IMax (a, b) ->
       let uconv, b = to_univ_level b uconv in
       if Level.is_sprop b then (uconv, b)
       else
         let uconv, a = to_univ_level a uconv in
-        let n = UnivGen.fresh_level () in
-        let csts = uconv.csts in
-        let csts =
-          if Level.is_sprop a then csts else Constraint.add (a, Le, n) csts
-        in
-        let csts =
-          if Level.is_sprop b then csts else Constraint.add (b, Le, n) csts
-        in
-        let uconv = { map = U.Map.add u n uconv.map; csts } in
-        (uconv, n))
+        if Level.is_sprop a then (uconv, b)
+        else
+          let n = UnivGen.fresh_level () in
+          let csts = uconv.csts in
+          let csts = Constraint.add (a, Le, n) csts in
+          let csts = Constraint.add (b, Le, n) csts in
+          let uconv = { map = U.Map.add u n uconv.map; csts } in
+          (uconv, n))
 
 type binder_kind =
   | NotImplicit
@@ -207,6 +204,7 @@ type 'uconv state = {
 (** the kernel will deal with the relevance annot *)
 let to_annot n = Context.annotR (N.to_name n)
 
+(* bit n of [int_of_univs univs] is 1 iff [List.nth univs n] is SProp *)
 let int_of_univs =
   let rec aux i = function
     | [] -> i
@@ -292,7 +290,7 @@ and ensure_exists (state : unit state) n i =
 and declare_def state n { ty; body; univs } i =
   let state = start_uconv state univs i in
   let state, ty = to_constr ty state in
-  let state, body = to_constr body state in
+  let ({ uconv } as state), body = to_constr body state in
   let state = { state with uconv = () } in
   ignore state;
   assert false
