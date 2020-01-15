@@ -219,11 +219,16 @@ let to_annot n = Context.annotR (N.to_name n)
 
 (* bit n of [int_of_univs univs] is 1 iff [List.nth univs n] is SProp *)
 let int_of_univs =
-  let rec aux i = function
-    | [] -> i
-    | u :: rest -> aux ((i * 2) + if Univ.Level.is_sprop u then 1 else 0) rest
+  let rec aux i acc = function
+    | [] -> (i, acc)
+    | u :: rest ->
+      let sprop = Univ.Level.is_sprop u in
+      aux
+        ((i * 2) + if sprop then 1 else 0)
+        (if sprop then acc else u :: acc)
+        rest
   in
-  fun l -> aux 0 (List.rev l)
+  fun l -> aux 0 [] (List.rev l)
 
 let start_uconv (state : unit state) univs i =
   let rec aux levels map i = function
@@ -311,7 +316,7 @@ let rec to_constr =
 
 and instantiate state n univs =
   assert (List.length univs < Sys.int_size);
-  let i = int_of_univs univs in
+  let i, univs = int_of_univs univs in
   let uconv = state.uconv in
   let (state : unit state), inst =
     ensure_exists { state with uconv = () } n i
@@ -378,7 +383,6 @@ and declare_ind state n { params; ty; ctors; univs } i =
       state ctors
   in
   let cnames, ctys = List.split ctors in
-  let cnames = List.map (fun n -> name_for n i) cnames in
   let state, univs = finish_uconv state univs in
   let entry =
     {
@@ -391,7 +395,7 @@ and declare_ind state n { params; ty; ctors; univs } i =
             mind_entry_typename = name_for n i;
             mind_entry_arity = ty;
             mind_entry_template = false;
-            mind_entry_consnames = cnames;
+            mind_entry_consnames = List.map (fun n -> name_for n i) cnames;
             mind_entry_lc = ctys;
           };
         ];
@@ -406,6 +410,14 @@ and declare_ind state n { params; ty; ctors; univs } i =
   in
   let inst = { ref = GlobRef.IndRef (mind, 0) } in
   let declared = add_declared state.declared n i inst in
+  let declared =
+    CList.fold_left_i
+      (fun cnum declared cname ->
+        add_declared declared cname i
+          { ref = GlobRef.ConstructRef ((mind, 0), cnum + 1) })
+      0 declared cnames
+  in
+  (* TODO add recursor to [declared] *)
   ({ state with declared }, inst)
 
 let declare_quot state = state (* TODO *)
