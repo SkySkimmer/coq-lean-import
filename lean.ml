@@ -81,42 +81,47 @@ end
 
 module N = LeanName
 
-type uid = UId of int
+module U = struct
+  type t = Prop | Succ of t | Max of t * t | IMax of t * t | UNamed of N.t
 
-type uexpr =
-  | Prop
-  | Succ of uid
-  | Max of uid * uid
-  | IMax of uid * uid
-  | UNamed of N.t
+  let compare : t -> t -> int = compare
+
+  module Self = struct
+    type nonrec t = t
+
+    let compare = compare
+  end
+
+  module Map = CMap.Make (Self)
+end
 
 type uconv = {
-  map : Univ.Level.t Int.Map.t;  (** Map from univ ids to Coq levels *)
+  map : Univ.Level.t U.Map.t;  (** Map from universes to Coq levels *)
   csts : Univ.Constraint.t;  (** Constraints verified by the levels *)
 }
 
-let rec to_univ_level exprs (UId i) uconv =
+let rec to_univ_level u uconv =
   let open Univ in
-  match Int.Map.find_opt i uconv.map with
+  match U.Map.find_opt u uconv.map with
   | Some u -> (uconv, u)
   | None ->
-    (match RRange.get exprs i with
+    (match u with
     | Prop -> (uconv, Level.sprop)
     | UNamed n ->
       CErrors.anomaly ~label:"to_univ_level"
         Pp.(str "unknown name " ++ N.pp n ++ str ".")
-    | Succ u ->
-      let uconv, u = to_univ_level exprs u uconv in
+    | Succ pred ->
+      let uconv, pred = to_univ_level pred uconv in
       let n = UnivGen.fresh_level () in
       let csts =
-        if Level.is_sprop u then Constraint.add (Level.set, Lt, n) uconv.csts
-        else Constraint.add (u, Lt, n) uconv.csts
+        if Level.is_sprop pred then Constraint.add (Level.set, Lt, n) uconv.csts
+        else Constraint.add (pred, Lt, n) uconv.csts
       in
-      let uconv = { map = Int.Map.add i n uconv.map; csts } in
+      let uconv = { map = U.Map.add u n uconv.map; csts } in
       (uconv, n)
     | Max (a, b) ->
-      let uconv, a = to_univ_level exprs a uconv in
-      let uconv, b = to_univ_level exprs b uconv in
+      let uconv, a = to_univ_level a uconv in
+      let uconv, b = to_univ_level b uconv in
       let n = UnivGen.fresh_level () in
       let csts = uconv.csts in
       let csts =
@@ -125,13 +130,13 @@ let rec to_univ_level exprs (UId i) uconv =
       let csts =
         if Level.is_sprop b then csts else Constraint.add (b, Le, n) csts
       in
-      let uconv = { map = Int.Map.add i n uconv.map; csts } in
+      let uconv = { map = U.Map.add u n uconv.map; csts } in
       (uconv, n)
     | IMax (a, b) ->
-      let uconv, b = to_univ_level exprs b uconv in
+      let uconv, b = to_univ_level b uconv in
       if Level.is_sprop b then (uconv, b)
       else
-        let uconv, a = to_univ_level exprs a uconv in
+        let uconv, a = to_univ_level a uconv in
         let n = UnivGen.fresh_level () in
         let csts = uconv.csts in
         let csts =
@@ -140,7 +145,7 @@ let rec to_univ_level exprs (UId i) uconv =
         let csts =
           if Level.is_sprop b then csts else Constraint.add (b, Le, n) csts
         in
-        let uconv = { map = Int.Map.add i n uconv.map; csts } in
+        let uconv = { map = U.Map.add u n uconv.map; csts } in
         (uconv, n))
 
 type binder_kind =
@@ -151,8 +156,8 @@ type binder_kind =
 
 type expr =
   | Bound of int
-  | Sort of uid
-  | Const of N.t * uid list
+  | Sort of U.t
+  | Const of N.t * U.t list
   | App of expr * expr
   | Let of { name : N.t; ty : expr; v : expr; rest : expr }
       (** Let: undocumented in export_format.md *)
@@ -186,8 +191,7 @@ type instantiation = { ref : GlobRef.t }
 type 'uconv state = {
   names : N.t RRange.t;
   exprs : expr RRange.t;
-  univs : uexpr RRange.t;
-  rev_univs : uid N.Map.t;
+  univs : U.t RRange.t;
   uconv : 'uconv;
   entries : entry N.Map.t;
   declared : instantiation Int.Map.t N.Map.t;
@@ -216,14 +220,14 @@ let start_uconv (state : unit state) univs i =
       assert (i = 0);
       map
     | u :: univs ->
-      let (UId u) = N.Map.get u state.rev_univs in
+      let u = U.UNamed u in
       let map =
-        if i mod 2 = 0 then Int.Map.add u (UnivGen.fresh_level ()) map
-        else Int.Map.add u Univ.Level.sprop map
+        if i mod 2 = 0 then U.Map.add u (UnivGen.fresh_level ()) map
+        else U.Map.add u Univ.Level.sprop map
       in
       aux map (i / 2) univs
   in
-  let map = aux Int.Map.empty i univs in
+  let map = aux U.Map.empty i univs in
   { state with uconv = { map; csts = Univ.Constraint.empty } }
 
 let rec to_constr =
@@ -233,20 +237,20 @@ let rec to_constr =
     f x state
   in
   let to_univ_level x state =
-    let uconv, x = to_univ_level state.univs x state.uconv in
+    let uconv, x = to_univ_level x state.uconv in
     ({ state with uconv }, x)
   in
   let ret x state = (state, x) in
   function
   | Bound i -> ret (mkRel (i + 1))
-  | Sort uid ->
-    to_univ_level uid >>= fun u ->
+  | Sort univ ->
+    to_univ_level univ >>= fun u ->
     ret (mkSort (Sorts.sort_of_univ (Univ.Universe.make u)))
   | Const (n, univs) ->
     fun state ->
       let state, univs =
         CList.fold_left_map
-          (fun state uid -> to_univ_level uid state)
+          (fun state univ -> to_univ_level univ state)
           state univs
       in
       instantiate state n univs
@@ -299,8 +303,7 @@ let empty_state =
   {
     names = RRange.singleton N.anon;
     exprs = RRange.empty;
-    univs = RRange.singleton Prop;
-    rev_univs = N.Map.empty;
+    univs = RRange.singleton U.Prop;
     uconv = ();
     entries = N.Map.empty;
     declared = N.Map.empty;
@@ -343,7 +346,7 @@ let rec do_ctors state nctors acc l =
 let add_entry state n entry =
   { state with entries = N.Map.add n entry state.entries }
 
-let as_uid s = UId (int_of_string s)
+let as_univ state s = RRange.get state.univs (int_of_string s)
 
 let do_line state l =
   (* Lean printing strangeness: sometimes we get double spaces (typically with INFIX) *)
@@ -405,38 +408,34 @@ let do_line state l =
       { state with names = RRange.append state.names n }
     | [ "#US"; base ] ->
       assert (next = RRange.length state.univs);
-      let base = as_uid base in
+      let base = as_univ state base in
       { state with univs = RRange.append state.univs (Succ base) }
     | [ "#UM"; a; b ] ->
       assert (next = RRange.length state.univs);
-      let a = as_uid a
-      and b = as_uid b in
+      let a = as_univ state a
+      and b = as_univ state b in
       { state with univs = RRange.append state.univs (Max (a, b)) }
     | [ "#UIM"; a; b ] ->
       assert (next = RRange.length state.univs);
-      let a = as_uid a
-      and b = as_uid b in
+      let a = as_univ state a
+      and b = as_univ state b in
       { state with univs = RRange.append state.univs (IMax (a, b)) }
     | [ "#UP"; n ] ->
       assert (next = RRange.length state.univs);
       let n = get_name state n in
-      {
-        state with
-        univs = RRange.append state.univs (UNamed n);
-        rev_univs = N.Map.add n (UId next) state.rev_univs;
-      }
+      { state with univs = RRange.append state.univs (UNamed n) }
     | [ "#EV"; n ] ->
       assert (next = RRange.length state.exprs);
       let n = int_of_string n in
       { state with exprs = RRange.append state.exprs (Bound n) }
     | [ "#ES"; u ] ->
       assert (next = RRange.length state.exprs);
-      let u = as_uid u in
+      let u = as_univ state u in
       { state with exprs = RRange.append state.exprs (Sort u) }
     | "#EC" :: n :: univs ->
       assert (next = RRange.length state.exprs);
       let n = get_name state n
-      and univs = List.map as_uid univs in
+      and univs = List.map (as_univ state) univs in
       { state with exprs = RRange.append state.exprs (Const (n, univs)) }
     | [ "#EA"; a; b ] ->
       assert (next = RRange.length state.exprs);
@@ -507,8 +506,6 @@ let import f =
       ++ str " entries. Found "
       ++ int (RRange.length state.univs)
       ++ str " universe expressions, "
-      ++ int (N.Map.cardinal state.rev_univs)
-      ++ str " named universes,"
       ++ int (RRange.length state.names)
       ++ str " names and "
       ++ int (RRange.length state.exprs)
