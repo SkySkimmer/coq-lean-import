@@ -39,11 +39,13 @@ end = struct
 end
 
 module LeanName : sig
-  type t
+  type t = private string
 
   val anon : t
 
   val append : t -> string -> t
+
+  val equal : t -> t -> bool
 
   val raw_append : t -> string -> t
   (** for private names *)
@@ -65,7 +67,7 @@ end = struct
 
   let anon : t = ""
 
-  let append a b = if a = "" then b else a ^ "." ^ b
+  let append a b = if a = "" then b else a ^ "_" ^ b
 
   let raw_append a b = a ^ b
 
@@ -76,6 +78,8 @@ end = struct
   let to_string x = x
 
   let pp = Pp.str
+
+  let equal = String.equal
 
   module Set = CString.Set
   module Map = CString.Map
@@ -175,7 +179,7 @@ type def = { ty : expr; body : expr; univs : N.t list }
 type ax = { ty : expr; univs : N.t list }
 
 type ind = {
-  nparams : int;
+  params : (binder_kind * N.t * expr) list;
   ty : expr;
   ctors : (N.t * expr) list;
   univs : N.t list;
@@ -239,6 +243,34 @@ let start_uconv (state : unit state) univs i =
   let levels, map = aux [] U.Map.empty i univs in
   { state with uconv = { levels; map; csts = Univ.Constraint.empty } }
 
+let univ_entry uconv ounivs =
+  let open Univ in
+  let ounivs = Array.of_list ounivs in
+  let univs = CArray.rev_of_list uconv.levels in
+  let unames =
+    Array.mapi
+      (fun i u ->
+        if i < Array.length ounivs then N.to_name ounivs.(i)
+        else Name (Id.of_string_soft (Level.to_string u)))
+      univs
+  in
+  Entries.Polymorphic_entry
+    (unames, UContext.make (Instance.of_array univs, uconv.csts))
+
+let finish_uconv state ounivs =
+  let univs = univ_entry state.uconv ounivs in
+  ({ state with uconv = () }, univs)
+
+let name_for n i =
+  if i = 0 then N.to_id n else Id.of_string (N.to_string n ^ string_of_int i)
+
+let add_declared declared n i inst =
+  N.Map.update n
+    (function
+      | None -> Some (Int.Map.singleton i inst)
+      | Some m -> Some (Int.Map.add i inst m))
+    declared
+
 let rec to_constr =
   let open Constr in
   let ( >>= ) x f state =
@@ -294,44 +326,89 @@ and ensure_exists (state : unit state) n i =
     assert (i <> 0);
     (match N.Map.find n state.entries with
     | Def def -> declare_def state n def i
-    | Ax ax -> assert false
-    | Ind ind -> assert false)
+    | Ax ax -> declare_ax state n ax i
+    | Ind ind -> declare_ind state n ind i)
 
 and declare_def state n { ty; body; univs } i =
   let state = start_uconv state univs i in
   let state, ty = to_constr ty state in
-  let ({ uconv } as state), body = to_constr body state in
-  let state = { state with uconv = () } in
+  let state, body = to_constr body state in
+  let state, univs = finish_uconv state univs in
   let kind = Decls.(IsDefinition Definition) in
-  let univs =
-    let open Univ in
-    let ounivs = Array.of_list univs in
-    let univs = CArray.rev_of_list uconv.levels in
-    let unames =
-      Array.mapi
-        (fun i u ->
-          if i < Array.length ounivs then N.to_name ounivs.(i)
-          else Name (Id.of_string_soft (Level.to_string u)))
-        univs
-    in
-    Entries.Polymorphic_entry
-      (unames, UContext.make (Instance.of_array univs, uconv.csts))
-  in
   let entry = Declare.definition_entry ~opaque:false ~types:ty ~univs body in
   let scope = DeclareDef.Global Declare.ImportDefaultBehavior in
   let ref =
-    DeclareDef.declare_definition ~scope ~name:(N.to_id n) ~kind
+    DeclareDef.declare_definition ~scope ~name:(name_for n i) ~kind
       UnivNames.empty_binders entry []
   in
   let inst = { ref } in
-  let declared =
-    N.Map.update n
-      (function
-        | None -> Some (Int.Map.singleton i inst)
-        | Some m -> Some (Int.Map.add i inst m))
-      state.declared
-  in
+  let declared = add_declared state.declared n i inst in
   ({ state with declared }, inst)
+
+and declare_ax state n { ty; univs } i =
+  let state = start_uconv state univs i in
+  let state, ty = to_constr ty state in
+  let state, univs = finish_uconv state univs in
+  let entry = Declare.ParameterEntry (None, (ty, univs), None) in
+  let c =
+    Declare.declare_constant ~name:(name_for n i)
+      ~kind:Decls.(IsAssumption Definitional)
+      entry
+  in
+  let inst = { ref = GlobRef.ConstRef c } in
+  let declared = add_declared state.declared n i inst in
+  ({ state with declared }, inst)
+
+and declare_ind state n { params; ty; ctors; univs } i =
+  let state = start_uconv state univs i in
+  let state, params =
+    CList.fold_left_map
+      (fun state (_bk, p, ty) ->
+        let state, ty = to_constr ty state in
+        (state, Context.Rel.Declaration.LocalAssum (to_annot p, ty)))
+      state params
+  in
+  let params = List.rev params in
+  let state, ty = to_constr ty state in
+  let state, ctors =
+    CList.fold_left_map
+      (fun state (n, ty) ->
+        let state, ty = to_constr ty state in
+        (state, (n, ty)))
+      state ctors
+  in
+  let cnames, ctys = List.split ctors in
+  let cnames = List.map (fun n -> name_for n i) cnames in
+  let state, univs = finish_uconv state univs in
+  let entry =
+    {
+      Entries.mind_entry_params = params;
+      mind_entry_record = None;
+      mind_entry_finite = Finite;
+      mind_entry_inds =
+        [
+          {
+            mind_entry_typename = name_for n i;
+            mind_entry_arity = ty;
+            mind_entry_template = false;
+            mind_entry_consnames = cnames;
+            mind_entry_lc = ctys;
+          };
+        ];
+      mind_entry_private = None;
+      mind_entry_universes = univs;
+      mind_entry_cumulative = false;
+    }
+  in
+  let mind =
+    DeclareInd.declare_mutual_inductive_with_eliminations entry
+      UnivNames.empty_binders []
+  in
+  let inst = { ref = GlobRef.IndRef (mind, 0) } in
+  let declared = add_declared state.declared n i inst in
+  ({ state with declared }, inst)
+
+let declare_quot state = state (* TODO *)
 
 let _ = to_constr
 
@@ -379,6 +456,38 @@ let rec do_ctors state nctors acc l =
       do_ctors state (nctors - 1) ((name, ty) :: acc) rest
     | _ -> CErrors.user_err Pp.(str "Not enough constructors")
 
+(** Replace [n] (meant to be an the inductive type appearing in the
+    constructor type) by (Bound k). *)
+let rec replace_ind ind k = function
+  | Const (n', _) when N.equal ind n' -> Bound k
+  | (Const _ | Bound _ | Sort _) as e -> e
+  | App (a, b) -> App (replace_ind ind k a, replace_ind ind k b)
+  | Let { name; ty; v; rest } ->
+    Let
+      {
+        name;
+        ty = replace_ind ind k ty;
+        v = replace_ind ind k v;
+        rest = replace_ind ind (k + 1) rest;
+      }
+  | Lam (bk, name, a, b) ->
+    Lam (bk, name, replace_ind ind k a, replace_ind ind (k + 1) b)
+  | Pi (bk, name, a, b) ->
+    Pi (bk, name, replace_ind ind k a, replace_ind ind (k + 1) b)
+
+let rec pop_params npar ty =
+  if npar = 0 then ([], ty)
+  else
+    match ty with
+    | Pi (bk, name, a, b) ->
+      let pars, ty = pop_params (npar - 1) b in
+      ((bk, name, a) :: pars, ty)
+    | _ -> assert false
+
+let fix_ctor ind nparams ty =
+  let _, ty = pop_params nparams ty in
+  replace_ind ind nparams ty
+
 let add_entry state n entry =
   { state with entries = N.Map.add n entry state.entries }
 
@@ -403,17 +512,23 @@ let do_line state l =
     and ty = get_expr state ty
     and univs = List.map (get_name state) univs in
     let ax = { ty; univs } in
+    let state, _ = declare_ax state name ax 0 in
     add_entry state name (Ax ax)
   | "#IND" :: nparams :: name :: ty :: nctors :: rest ->
     let nparams = int_of_string nparams
     and name = get_name state name
     and ty = get_expr state ty
     and nctors = int_of_string nctors in
+    let params, ty = pop_params nparams ty in
     let ctors, univs = do_ctors state nctors [] rest in
+    let ctors =
+      List.map (fun (nctor, ty) -> (nctor, fix_ctor name nparams ty)) ctors
+    in
     let univs = List.map (get_name state) univs in
-    let ind = { nparams; ty; ctors; univs } in
+    let ind = { params; ty; ctors; univs } in
+    let state, _ = declare_ind state name ind 0 in
     add_entry state name (Ind ind)
-  | [ "#QUOT" ] -> state (* TODO *)
+  | [ "#QUOT" ] -> declare_quot state
   | (("#PREFIX" | "#INFIX" | "#POSTFIX") as kind) :: rest ->
     (match rest with
     | [ n; level; token ] ->
