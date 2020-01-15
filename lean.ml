@@ -107,6 +107,10 @@ type uconv = {
   csts : Univ.Constraint.t;  (** Constraints verified by the levels *)
 }
 
+(* TODO improve by reducing imax to max when not sprop instantiated,
+   such that we can normalize to a list of levels+increments.
+
+   Try to figure out how to make [max(a,b) <= max(a,b,c)] work. *)
 let rec to_univ_level u uconv =
   let open Univ in
   match U.Map.find_opt u uconv.map with
