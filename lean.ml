@@ -50,6 +50,8 @@ module LeanName : sig
 
   val to_string : t -> string
 
+  val to_id : t -> Id.t
+
   val to_name : t -> Name.t
 
   val pp : t -> Pp.t
@@ -283,7 +285,6 @@ and instantiate state n univs =
     ensure_exists { state with uconv = () } n i
   in
   let state = { state with uconv } in
-  let inst = state.declared |> N.Map.find n |> Int.Map.find i in
   (* TODO adjust instantiation for the ref's extra univs *)
   (state, Constr.mkRef (inst.ref, Univ.Instance.of_array (Array.of_list univs)))
 
@@ -301,8 +302,36 @@ and declare_def state n { ty; body; univs } i =
   let state, ty = to_constr ty state in
   let ({ uconv } as state), body = to_constr body state in
   let state = { state with uconv = () } in
-  ignore state;
-  assert false
+  let kind = Decls.(IsDefinition Definition) in
+  let univs =
+    let open Univ in
+    let ounivs = Array.of_list univs in
+    let univs = CArray.rev_of_list uconv.levels in
+    let unames =
+      Array.mapi
+        (fun i u ->
+          if i < Array.length ounivs then N.to_name ounivs.(i)
+          else Name (Id.of_string_soft (Level.to_string u)))
+        univs
+    in
+    Entries.Polymorphic_entry
+      (unames, UContext.make (Instance.of_array univs, uconv.csts))
+  in
+  let entry = Declare.definition_entry ~opaque:false ~types:ty ~univs body in
+  let scope = DeclareDef.Global Declare.ImportDefaultBehavior in
+  let ref =
+    DeclareDef.declare_definition ~scope ~name:(N.to_id n) ~kind
+      UnivNames.empty_binders entry []
+  in
+  let inst = { ref } in
+  let declared =
+    N.Map.update n
+      (function
+        | None -> Some (Int.Map.singleton i inst)
+        | Some m -> Some (Int.Map.add i inst m))
+      state.declared
+  in
+  ({ state with declared }, inst)
 
 let _ = to_constr
 
@@ -367,6 +396,7 @@ let do_line state l =
     and body = get_expr state body
     and univs = List.map (get_name state) univs in
     let def = { ty; body; univs } in
+    let state, _ = declare_def state name def 0 in
     add_entry state name (Def def)
   | "#AX" :: name :: ty :: univs ->
     let name = get_name state name
@@ -479,33 +509,7 @@ let do_line state l =
 
 let lcnt = ref 0
 
-let rec do_input state ch =
-  match input_line ch with
-  | exception End_of_file -> state
-  | l ->
-    let state =
-      try do_line state l
-      with e ->
-        let e = CErrors.push e in
-        Feedback.msg_info
-          Pp.(str "issue at line " ++ int !lcnt ++ str (": " ^ l) ++ fnl ());
-        Util.iraise e
-    in
-    incr lcnt;
-    do_input state ch
-
-let import f =
-  let ch = open_in f in
-  let state =
-    try
-      lcnt := 0;
-      let s = do_input empty_state ch in
-      close_in ch;
-      s
-    with e ->
-      close_in ch;
-      raise e
-  in
+let finish state =
   Feedback.msg_info
     Pp.(
       str "Read "
@@ -517,6 +521,29 @@ let import f =
       ++ str " names and "
       ++ int (RRange.length state.exprs)
       ++ str " expression nodes.")
+
+let rec do_input state ch =
+  match input_line ch with
+  | exception End_of_file ->
+    close_in ch;
+    finish state
+  | l ->
+    (match do_line state l with
+    | state ->
+      incr lcnt;
+      do_input state ch
+    | exception e ->
+      let e = CErrors.push e in
+      close_in ch;
+      Feedback.msg_info
+        Pp.(
+          str "issue at line " ++ int !lcnt
+          ++ str (": " ^ l)
+          ++ fnl () ++ CErrors.iprint e))
+
+let import f =
+  lcnt := 1;
+  do_input empty_state (open_in f)
 
 (* Lean stdlib:
 - 10244 entries
