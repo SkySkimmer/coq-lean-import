@@ -505,6 +505,11 @@ let add_entry state n entry =
 
 let as_univ state s = RRange.get state.univs (int_of_string s)
 
+let just_parse =
+  Goptions.declare_bool_option_and_ref ~depr:false ~name:"lean just parse"
+    ~key:[ "Lean"; "Just"; "Parsing" ]
+    ~value:false
+
 let do_line state l =
   (* Lean printing strangeness: sometimes we get double spaces (typically with INFIX) *)
   match
@@ -517,14 +522,18 @@ let do_line state l =
     and body = get_expr state body
     and univs = List.map (get_name state) univs in
     let def = { ty; body; univs } in
-    let state, _ = declare_def state name def 0 in
+    let state =
+      if just_parse () then state else fst (declare_def state name def 0)
+    in
     add_entry state name (Def def)
   | "#AX" :: name :: ty :: univs ->
     let name = get_name state name
     and ty = get_expr state ty
     and univs = List.map (get_name state) univs in
     let ax = { ty; univs } in
-    let state, _ = declare_ax state name ax 0 in
+    let state =
+      if just_parse () then state else fst (declare_ax state name ax 0)
+    in
     add_entry state name (Ax ax)
   | "#IND" :: nparams :: name :: ty :: nctors :: rest ->
     let nparams = int_of_string nparams
@@ -538,9 +547,11 @@ let do_line state l =
     in
     let univs = List.map (get_name state) univs in
     let ind = { params; ty; ctors; univs } in
-    let state, _ = declare_ind state name ind 0 in
+    let state =
+      if just_parse () then state else fst (declare_ind state name ind 0)
+    in
     add_entry state name (Ind ind)
-  | [ "#QUOT" ] -> declare_quot state
+  | [ "#QUOT" ] -> if just_parse () then state else declare_quot state
   | (("#PREFIX" | "#INFIX" | "#POSTFIX") as kind) :: rest ->
     (match rest with
     | [ n; level; token ] ->
