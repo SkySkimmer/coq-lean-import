@@ -12,6 +12,7 @@ DECLARE PLUGIN "lean_import_plugin"
 
 {
 open Stdarg
+let init () = ()
 }
 
 VERNAC COMMAND EXTEND LeanImport CLASSIFIED AS SIDEFF

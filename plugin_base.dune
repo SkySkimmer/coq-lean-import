@@ -1,6 +1,0 @@
-(library
-  (name lean_import_plugin)
-  (public_name coq.plugins.lean_import_plugin)
-  (synopsis "Import Lean proofs into Coq!")
-  (libraries coq.vernac)
-  (flags :standard -w -40))
