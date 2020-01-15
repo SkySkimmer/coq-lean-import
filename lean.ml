@@ -706,3 +706,5 @@ let import f =
 - 14091 names
 - 562009 expression nodes
 *)
+
+(* TODO: fix instantiation with extra universes (current blocker on export/core.out) *)
