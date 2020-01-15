@@ -262,6 +262,10 @@ let univ_entry uconv ounivs =
   Entries.Polymorphic_entry
     (unames, UContext.make (Instance.of_array univs, uconv.csts))
 
+(* TODO restrict univs (eg [has_add : Sort (u+1) -> Sort(u+1)] can
+   drop the [u] and keep only the replacement for [u+1]??
+
+   Preserve algebraics in codomain position? *)
 let finish_uconv state ounivs =
   let univs = univ_entry state.uconv ounivs in
   ({ state with uconv = () }, univs)
@@ -328,7 +332,7 @@ and instantiate state n univs =
 and ensure_exists (state : unit state) n i =
   try (state, state.declared |> N.Map.find n |> Int.Map.find i)
   with Not_found ->
-    assert (i <> 0);
+    if i = 0 then CErrors.anomaly Pp.(N.pp n ++ str " was not instantiated!");
     (match N.Map.find n state.entries with
     | Def def -> declare_def state n def i
     | Ax ax -> declare_ax state n ax i
@@ -384,6 +388,7 @@ and declare_ind state n { params; ty; ctors; univs } i =
   in
   let cnames, ctys = List.split ctors in
   let state, univs = finish_uconv state univs in
+  let ind_name = name_for n i in
   let entry =
     {
       Entries.mind_entry_params = params;
@@ -392,7 +397,7 @@ and declare_ind state n { params; ty; ctors; univs } i =
       mind_entry_inds =
         [
           {
-            mind_entry_typename = name_for n i;
+            mind_entry_typename = ind_name;
             mind_entry_arity = ty;
             mind_entry_template = false;
             mind_entry_consnames = List.map (fun n -> name_for n i) cnames;
@@ -417,6 +422,17 @@ and declare_ind state n { params; ty; ctors; univs } i =
           { ref = GlobRef.ConstructRef ((mind, 0), cnum + 1) })
       0 declared cnames
   in
+  let squashed =
+    (Global.lookup_mind mind).mind_packets.(0).mind_kelim == Sorts.InSProp
+  in
+  let elim_suffix = if squashed then "_sind" else "_rect" in
+  let elim =
+    Nametab.locate
+      (Libnames.qualid_of_ident
+         (Id.of_string (Id.to_string ind_name ^ elim_suffix)))
+  in
+  let elim = { ref = elim } in
+  let declared = add_declared declared (N.append n "rec") i elim in
   (* TODO add recursor to [declared] *)
   ({ state with declared }, inst)
 
