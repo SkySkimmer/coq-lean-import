@@ -97,6 +97,7 @@ end
 
 type uconv = {
   map : Univ.Level.t U.Map.t;  (** Map from universes to Coq levels *)
+  levels : Univ.Level.t list;  (** Levels used (in reverse order) *)
   csts : Univ.Constraint.t;  (** Constraints verified by the levels *)
 }
 
@@ -117,7 +118,9 @@ let rec to_univ_level u uconv =
         if Level.is_sprop pred then Constraint.add (Level.set, Lt, n) uconv.csts
         else Constraint.add (pred, Lt, n) uconv.csts
       in
-      let uconv = { map = U.Map.add u n uconv.map; csts } in
+      let uconv =
+        { levels = n :: uconv.levels; map = U.Map.add u n uconv.map; csts }
+      in
       (uconv, n)
     | Max (a, b) ->
       let uconv, a = to_univ_level a uconv in
@@ -129,7 +132,9 @@ let rec to_univ_level u uconv =
         let csts = uconv.csts in
         let csts = Constraint.add (a, Le, n) csts in
         let csts = Constraint.add (b, Le, n) csts in
-        let uconv = { map = U.Map.add u n uconv.map; csts } in
+        let uconv =
+          { levels = n :: uconv.levels; map = U.Map.add u n uconv.map; csts }
+        in
         (uconv, n)
     | IMax (a, b) ->
       let uconv, b = to_univ_level b uconv in
@@ -142,7 +147,9 @@ let rec to_univ_level u uconv =
           let csts = uconv.csts in
           let csts = Constraint.add (a, Le, n) csts in
           let csts = Constraint.add (b, Le, n) csts in
-          let uconv = { map = U.Map.add u n uconv.map; csts } in
+          let uconv =
+            { levels = n :: uconv.levels; map = U.Map.add u n uconv.map; csts }
+          in
           (uconv, n))
 
 type binder_kind =
@@ -213,20 +220,22 @@ let int_of_univs =
   fun l -> aux 0 (List.rev l)
 
 let start_uconv (state : unit state) univs i =
-  let rec aux map i = function
+  let rec aux levels map i = function
     | [] ->
       assert (i = 0);
-      map
+      (levels, map)
     | u :: univs ->
       let u = U.UNamed u in
-      let map =
-        if i mod 2 = 0 then U.Map.add u (UnivGen.fresh_level ()) map
-        else U.Map.add u Univ.Level.sprop map
+      let levels, map =
+        if i mod 2 = 0 then
+          let v = UnivGen.fresh_level () in
+          (v :: levels, U.Map.add u v map)
+        else (levels, U.Map.add u Univ.Level.sprop map)
       in
-      aux map (i / 2) univs
+      aux levels map (i / 2) univs
   in
-  let map = aux U.Map.empty i univs in
-  { state with uconv = { map; csts = Univ.Constraint.empty } }
+  let levels, map = aux [] U.Map.empty i univs in
+  { state with uconv = { levels; map; csts = Univ.Constraint.empty } }
 
 let rec to_constr =
   let open Constr in
