@@ -101,66 +101,38 @@ module U = struct
   module Map = CMap.Make (Self)
 end
 
+(** [map] goes from lean names to universes (in practice either SProp or a named level) *)
+let rec to_universe map =
+  let open Univ in
+  function
+  | U.Prop -> Universe.sprop
+  | UNamed n -> Universe.make (N.Map.get n map)
+  | Succ u -> Universe.super (to_universe map u)
+  | Max (a, b) -> Universe.sup (to_universe map a) (to_universe map b)
+  | IMax (a, b) ->
+    let ub = to_universe map b in
+    if Universe.is_sprop ub then ub else Universe.sup (to_universe map a) ub
+
 type uconv = {
-  map : Univ.Level.t U.Map.t;  (** Map from universes to Coq levels *)
-  levels : Univ.Level.t list;  (** Levels used (in reverse order) *)
-  csts : Univ.Constraint.t;  (** Constraints verified by the levels *)
+  map : Univ.Level.t N.Map.t;  (** Map from lean names to Coq universes *)
+  levels : Univ.Level.t Univ.Universe.Map.t;
+      (** Map from algebraic universes to levels (only levels representing
+          an algebraic) *)
 }
 
-(* TODO improve by reducing imax to max when not sprop instantiated,
-   such that we can normalize to a list of levels+increments.
-
-   Try to figure out how to make [max(a,b) <= max(a,b,c)] work. *)
-let rec to_univ_level u uconv =
-  let open Univ in
-  match U.Map.find_opt u uconv.map with
-  | Some u -> (uconv, u)
+let to_univ_level u uconv =
+  let u = to_universe uconv.map u in
+  match Univ.Universe.level u with
+  | Some l -> (uconv, l)
   | None ->
-    (match u with
-    | Prop -> (uconv, Level.sprop)
-    | UNamed n ->
-      CErrors.anomaly ~label:"to_univ_level"
-        Pp.(str "unknown name " ++ N.pp n ++ str ".")
-    | Succ pred ->
-      let uconv, pred = to_univ_level pred uconv in
-      let n = UnivGen.fresh_level () in
-      let csts =
-        if Level.is_sprop pred then Constraint.add (Level.set, Lt, n) uconv.csts
-        else Constraint.add (pred, Lt, n) uconv.csts
-      in
+    (match Univ.Universe.Map.find_opt u uconv.levels with
+    | Some l -> (uconv, l)
+    | None ->
+      let l = UnivGen.fresh_level () in
       let uconv =
-        { levels = n :: uconv.levels; map = U.Map.add u n uconv.map; csts }
+        { uconv with levels = Univ.Universe.Map.add u l uconv.levels }
       in
-      (uconv, n)
-    | Max (a, b) ->
-      let uconv, a = to_univ_level a uconv in
-      let uconv, b = to_univ_level b uconv in
-      if Level.is_sprop a then (uconv, b)
-      else if Level.is_sprop b then (uconv, a)
-      else
-        let n = UnivGen.fresh_level () in
-        let csts = uconv.csts in
-        let csts = Constraint.add (a, Le, n) csts in
-        let csts = Constraint.add (b, Le, n) csts in
-        let uconv =
-          { levels = n :: uconv.levels; map = U.Map.add u n uconv.map; csts }
-        in
-        (uconv, n)
-    | IMax (a, b) ->
-      let uconv, b = to_univ_level b uconv in
-      if Level.is_sprop b then (uconv, b)
-      else
-        let uconv, a = to_univ_level a uconv in
-        if Level.is_sprop a then (uconv, b)
-        else
-          let n = UnivGen.fresh_level () in
-          let csts = uconv.csts in
-          let csts = Constraint.add (a, Le, n) csts in
-          let csts = Constraint.add (b, Le, n) csts in
-          let uconv =
-            { levels = n :: uconv.levels; map = U.Map.add u n uconv.map; csts }
-          in
-          (uconv, n))
+      (uconv, l))
 
 type binder_kind =
   | NotImplicit
@@ -235,36 +207,100 @@ let int_of_univs =
   fun l -> aux 0 [] (List.rev l)
 
 let start_uconv (state : unit state) univs i =
-  let rec aux levels map i = function
+  let rec aux map i = function
     | [] ->
       assert (i = 0);
-      (levels, map)
+      map
     | u :: univs ->
-      let u = U.UNamed u in
-      let levels, map =
+      let map =
         if i mod 2 = 0 then
           let v = UnivGen.fresh_level () in
-          (v :: levels, U.Map.add u v map)
-        else (levels, U.Map.add u Univ.Level.sprop map)
+          N.Map.add u v map
+        else N.Map.add u Univ.Level.sprop map
       in
-      aux levels map (i / 2) univs
+      aux map (i / 2) univs
   in
-  let levels, map = aux [] U.Map.empty i univs in
-  { state with uconv = { levels; map; csts = Univ.Constraint.empty } }
+  let map = aux N.Map.empty i univs in
+  { state with uconv = { map; levels = Univ.Universe.Map.empty } }
 
-let univ_entry uconv ounivs =
+let rec make_unames univs ounivs =
+  match (univs, ounivs) with
+  | _, [] ->
+    List.map (fun u -> Name (Id.of_string_soft (Univ.Level.to_string u))) univs
+  | _u :: univs, o :: ounivs -> N.to_name o :: make_unames univs ounivs
+  | [], _ :: _ -> assert false
+
+let universe_repr u =
   let open Univ in
-  let ounivs = Array.of_list ounivs in
-  let univs = CArray.rev_of_list uconv.levels in
-  let unames =
-    Array.mapi
-      (fun i u ->
-        if i < Array.length ounivs then N.to_name ounivs.(i)
-        else Name (Id.of_string_soft (Level.to_string u)))
-      univs
+  List.fold_left
+    (fun repr (l, n) -> LMap.add l n repr)
+    LMap.empty (Universe.repr u)
+
+(* max(a,b) <= max(a+1,b) but not strictly *)
+let cst_for repr repr' =
+  let open Univ in
+  LMap.fold
+    (fun l n -> function None -> None
+      | Some strict ->
+        (match LMap.find_opt l repr' with
+        | None -> None
+        | Some n' ->
+          if n < n' then Some strict else if n = n' then Some false else None))
+    repr (Some true)
+
+let smart_cst ((l, _, _) as cst) csts =
+  if Univ.Level.is_sprop l then csts else Univ.Constraint.add cst csts
+
+let univ_entry { map; levels } ounivs =
+  let open Univ in
+  let univs =
+    CList.map_filter
+      (fun u ->
+        let u = N.Map.get u map in
+        if Level.is_sprop u then None else Some u)
+      ounivs
   in
-  Entries.Polymorphic_entry
-    (unames, UContext.make (Instance.of_array univs, uconv.csts))
+  let univs, csts =
+    if Universe.Map.is_empty levels then (univs, Constraint.empty)
+    else
+      let univs = List.rev univs in
+      (* add the new levels to univs, add constraints from each a to
+         max(a+n,...), add constraints between maxes (eg max(a,b) <=
+         max(a,b,c)) *)
+      let univs, csts, _ =
+        Universe.Map.fold
+          (fun alg l (univs, csts, reprs) ->
+            let repr = universe_repr alg in
+            let csts =
+              LMap.fold
+                (fun l' n csts ->
+                  let d = if n = 0 then Le else Lt in
+                  smart_cst (l', d, l) csts)
+                repr csts
+            in
+            let csts =
+              List.fold_left
+                (fun csts (l', repr') ->
+                  match cst_for repr repr' with
+                  | Some strict ->
+                    smart_cst (l, (if strict then Lt else Le), l') csts
+                  | None ->
+                    (match cst_for repr' repr with
+                    | None -> csts
+                    | Some strict ->
+                      smart_cst (l', (if strict then Lt else Le), l) csts))
+                csts reprs
+            in
+            (l :: univs, csts, (l, repr) :: reprs))
+          levels
+          (univs, Constraint.empty, [])
+      in
+      let univs = List.rev univs in
+      (univs, csts)
+  in
+  let unames = Array.of_list (make_unames univs ounivs) in
+  let univs = Instance.of_array (Array.of_list univs) in
+  Entries.Polymorphic_entry (unames, UContext.make (univs, csts))
 
 (* TODO restrict univs (eg [has_add : Sort (u+1) -> Sort(u+1)] can
    drop the [u] and keep only the replacement for [u+1]??
