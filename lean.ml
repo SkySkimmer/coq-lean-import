@@ -121,7 +121,6 @@ type uconv = {
 }
 
 let to_univ_level u uconv =
-  let u = to_universe uconv.map u in
   match Univ.Universe.level u with
   | Some l -> (uconv, l)
   | None ->
@@ -172,7 +171,15 @@ type notation = {
   token : string;
 }
 
-type instantiation = { ref : GlobRef.t }
+type instantiation = {
+  ref : GlobRef.t;
+  algs : Univ.Universe.t list;
+      (** For each extra universe, produce the algebraic it corresponds to
+          (the initial universes are replaced by the appropriate Var) *)
+  is_elim : bool;
+      (** When declaring the eliminator for an inductive, the motive's
+          universe is the first explicit universe for Lean and after the algebraics for Coq. *)
+}
 
 type 'uconv state = {
   names : N.t RRange.t;
@@ -260,16 +267,16 @@ let univ_entry { map; levels } ounivs =
         if Level.is_sprop u then None else Some u)
       ounivs
   in
-  let univs, csts =
-    if Universe.Map.is_empty levels then (univs, Constraint.empty)
+  let univs, csts, algs =
+    if Universe.Map.is_empty levels then (univs, Constraint.empty, [])
     else
       let univs = List.rev univs in
       (* add the new levels to univs, add constraints from each a to
          max(a+n,...), add constraints between maxes (eg max(a,b) <=
          max(a,b,c)) *)
-      let univs, csts, _ =
+      let univs, csts, algs, _ =
         Universe.Map.fold
-          (fun alg l (univs, csts, reprs) ->
+          (fun alg l (univs, csts, algs, reprs) ->
             let repr = universe_repr alg in
             let csts =
               LMap.fold
@@ -291,16 +298,19 @@ let univ_entry { map; levels } ounivs =
                       smart_cst (l', (if strict then Lt else Le), l) csts))
                 csts reprs
             in
-            (l :: univs, csts, (l, repr) :: reprs))
+            (l :: univs, csts, alg :: algs, (l, repr) :: reprs))
           levels
-          (univs, Constraint.empty, [])
+          (univs, Constraint.empty, [], [])
       in
       let univs = List.rev univs in
-      (univs, csts)
+      (univs, csts, algs)
   in
   let unames = Array.of_list (make_unames univs ounivs) in
   let univs = Instance.of_array (Array.of_list univs) in
-  Entries.Polymorphic_entry (unames, UContext.make (univs, csts))
+  let uctx = UContext.make (univs, csts) in
+  let subst = make_instance_subst univs in
+  let algs = List.rev_map (subst_univs_level_universe subst) algs in
+  (Entries.Polymorphic_entry (unames, uctx), algs)
 
 (* TODO restrict univs (eg [has_add : Sort (u+1) -> Sort(u+1)] can
    drop the [u] and keep only the replacement for [u+1]??
@@ -326,9 +336,10 @@ let rec to_constr =
     let state, x = x state in
     f x state
   in
-  let to_univ_level x state =
-    let uconv, x = to_univ_level x state.uconv in
-    ({ state with uconv }, x)
+  let to_univ_level u state =
+    let u = to_universe state.uconv.map u in
+    let uconv, u = to_univ_level u state.uconv in
+    ({ state with uconv }, u)
   in
   let ret x state = (state, x) in
   function
@@ -360,20 +371,41 @@ let rec to_constr =
 
 and instantiate state n univs =
   assert (List.length univs < Sys.int_size);
+  (* TODO what happens when is_elim and the motive is instantiated with Prop? *)
   let i, univs = int_of_univs univs in
   let uconv = state.uconv in
   let (state : unit state), inst =
     ensure_exists { state with uconv = () } n i
   in
   let state = { state with uconv } in
-  (* TODO adjust instantiation for the ref's extra univs *)
-  (state, Constr.mkRef (inst.ref, Univ.Instance.of_array (Array.of_list univs)))
+  let motive, univs =
+    if inst.is_elim then
+      match univs with [] -> assert false | m :: univs -> ([| m |], univs)
+    else ([||], univs)
+  in
+  let u = Univ.Instance.of_array (Array.of_list univs) in
+  let state, extra =
+    CList.fold_left_map
+      (fun acc alg ->
+        let uconv, l =
+          to_univ_level (Univ.subst_instance_universe u alg) state.uconv
+        in
+        ({ state with uconv }, l))
+      state inst.algs
+  in
+  let u =
+    Univ.Instance.of_array
+      (Array.concat [ Univ.Instance.to_array u; Array.of_list extra; motive ])
+  in
+  (state, Constr.mkRef (inst.ref, u))
 
 and ensure_exists (state : unit state) n i =
   try (state, state.declared |> N.Map.find n |> Int.Map.find i)
   with Not_found ->
+    (* TODO can we end up asking for a ctor or eliminator before
+       asking for the inductive type? *)
     if i = 0 then CErrors.anomaly Pp.(N.pp n ++ str " was not instantiated!");
-    (match N.Map.find n state.entries with
+    (match N.Map.get n state.entries with
     | Def def -> declare_def state n def i
     | Ax ax -> declare_ax state n ax i
     | Ind ind -> declare_ind state n ind i)
@@ -382,7 +414,7 @@ and declare_def state n { ty; body; univs } i =
   let state = start_uconv state univs i in
   let state, ty = to_constr ty state in
   let state, body = to_constr body state in
-  let state, univs = finish_uconv state univs in
+  let state, (univs, algs) = finish_uconv state univs in
   let kind = Decls.(IsDefinition Definition) in
   let entry = Declare.definition_entry ~opaque:false ~types:ty ~univs body in
   let scope = DeclareDef.Global Declare.ImportDefaultBehavior in
@@ -390,21 +422,21 @@ and declare_def state n { ty; body; univs } i =
     DeclareDef.declare_definition ~scope ~name:(name_for n i) ~kind
       UnivNames.empty_binders entry []
   in
-  let inst = { ref } in
+  let inst = { ref; algs; is_elim = false } in
   let declared = add_declared state.declared n i inst in
   ({ state with declared }, inst)
 
 and declare_ax state n { ty; univs } i =
   let state = start_uconv state univs i in
   let state, ty = to_constr ty state in
-  let state, univs = finish_uconv state univs in
+  let state, (univs, algs) = finish_uconv state univs in
   let entry = Declare.ParameterEntry (None, (ty, univs), None) in
   let c =
     Declare.declare_constant ~name:(name_for n i)
       ~kind:Decls.(IsAssumption Definitional)
       entry
   in
-  let inst = { ref = GlobRef.ConstRef c } in
+  let inst = { ref = GlobRef.ConstRef c; algs; is_elim = false } in
   let declared = add_declared state.declared n i inst in
   ({ state with declared }, inst)
 
@@ -427,7 +459,7 @@ and declare_ind state n { params; ty; ctors; univs } i =
       state ctors
   in
   let cnames, ctys = List.split ctors in
-  let state, univs = finish_uconv state univs in
+  let state, (univs, algs) = finish_uconv state univs in
   let ind_name = name_for n i in
   let entry =
     {
@@ -453,27 +485,33 @@ and declare_ind state n { params; ty; ctors; univs } i =
     DeclareInd.declare_mutual_inductive_with_eliminations entry
       UnivNames.empty_binders []
   in
-  let inst = { ref = GlobRef.IndRef (mind, 0) } in
+  let inst = { ref = GlobRef.IndRef (mind, 0); algs; is_elim = false } in
   let declared = add_declared state.declared n i inst in
   let declared =
     CList.fold_left_i
       (fun cnum declared cname ->
         add_declared declared cname i
-          { ref = GlobRef.ConstructRef ((mind, 0), cnum + 1) })
+          {
+            ref = GlobRef.ConstructRef ((mind, 0), cnum + 1);
+            algs;
+            is_elim = false;
+          })
       0 declared cnames
   in
   let squashed =
     (Global.lookup_mind mind).mind_packets.(0).mind_kelim == Sorts.InSProp
   in
-  let elim_suffix = if squashed then "_sind" else "_rect" in
+  (* TODO I think we should autodeclare both in the _rect case *)
+  let elim_suffix, is_elim =
+    if squashed then ("_sind", false) else ("_rect", true)
+  in
   let elim =
     Nametab.locate
       (Libnames.qualid_of_ident
          (Id.of_string (Id.to_string ind_name ^ elim_suffix)))
   in
-  let elim = { ref = elim } in
+  let elim = { ref = elim; algs; is_elim } in
   let declared = add_declared declared (N.append n "rec") i elim in
-  (* TODO add recursor to [declared] *)
   ({ state with declared }, inst)
 
 let declare_quot state = state (* TODO *)
