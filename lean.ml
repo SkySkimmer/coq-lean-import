@@ -114,6 +114,8 @@ let classify_univ u =
    - or Prop+1 <= l so l+1 <= l+1
 
    to simulate this, each named level becomes > Set and we compute maxes accordingly
+
+    todo I think this doesn't work, we need to postprocess the max instead
 *)
 let smart_max a b =
   match (classify_univ a, classify_univ b) with
