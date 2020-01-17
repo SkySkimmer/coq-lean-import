@@ -120,6 +120,42 @@ type uconv = {
           an algebraic) *)
 }
 
+let lean_id = Id.of_string "Lean"
+
+let lean_fancy_univs =
+  Goptions.declare_bool_option_and_ref ~depr:false ~name:"lean fancy univs"
+    ~key:[ "Lean"; "Fancy"; "Universes" ]
+    ~value:true
+
+let level_of_universe u =
+  let u = Univ.Universe.repr u in
+  let u =
+    List.map
+      (fun (l, n) ->
+        let open Univ.Level in
+        if is_sprop l then (
+          assert (n = 0);
+          "SProp")
+        else if is_set l then "Set+" ^ string_of_int n
+        else
+          match name l with
+          | None -> assert false
+          | Some name ->
+            let d, i = UGlobal.repr name in
+            let d = DirPath.repr d in
+            (match (d, i) with
+            | [ name; l ], 0 when Id.equal l lean_id ->
+              Id.to_string name ^ if n = 0 then "" else "+" ^ string_of_int n
+            | _ -> to_string l))
+      u
+  in
+  let s = (match u with [ _ ] -> "" | _ -> "max__") ^ String.concat "_" u in
+  Univ.Level.(
+    make (UGlobal.make (DirPath.make [ Id.of_string_soft s; lean_id ]) 0))
+
+let level_of_universe u =
+  if lean_fancy_univs () then level_of_universe u else UnivGen.fresh_level ()
+
 let to_univ_level u uconv =
   match Univ.Universe.level u with
   | Some l -> (uconv, l)
@@ -127,7 +163,7 @@ let to_univ_level u uconv =
     (match Univ.Universe.Map.find_opt u uconv.levels with
     | Some l -> (uconv, l)
     | None ->
-      let l = UnivGen.fresh_level () in
+      let l = level_of_universe u in
       let uconv =
         { uconv with levels = Univ.Universe.Map.add u l uconv.levels }
       in
@@ -213,6 +249,12 @@ let int_of_univs =
   in
   fun l -> aux 0 [] (List.rev l)
 
+let univ_of_name u =
+  if lean_fancy_univs () then
+    let u = DirPath.make [ N.to_id u; lean_id ] in
+    Univ.Level.(make (UGlobal.make u 0))
+  else UnivGen.fresh_level ()
+
 let start_uconv (state : unit state) univs i =
   let rec aux map i = function
     | [] ->
@@ -221,7 +263,7 @@ let start_uconv (state : unit state) univs i =
     | u :: univs ->
       let map =
         if i mod 2 = 0 then
-          let v = UnivGen.fresh_level () in
+          let v = univ_of_name u in
           N.Map.add u v map
         else N.Map.add u Univ.Level.sprop map
       in
