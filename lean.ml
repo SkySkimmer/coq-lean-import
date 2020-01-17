@@ -241,7 +241,7 @@ let int_of_univs =
   let rec aux i acc = function
     | [] -> (i, acc)
     | u :: rest ->
-      let sprop = Univ.Level.is_sprop u in
+      let sprop = Univ.Universe.is_sprop u in
       aux
         ((i * 2) + if sprop then 1 else 0)
         (if sprop then acc else u :: acc)
@@ -372,31 +372,24 @@ let add_declared declared n i inst =
       | Some m -> Some (Int.Map.add i inst m))
     declared
 
+let to_univ_level' u state =
+  let u = to_universe state.uconv.map u in
+  let uconv, u = to_univ_level u state.uconv in
+  ({ state with uconv }, u)
+
 let rec to_constr =
   let open Constr in
   let ( >>= ) x f state =
     let state, x = x state in
     f x state
   in
-  let to_univ_level u state =
-    let u = to_universe state.uconv.map u in
-    let uconv, u = to_univ_level u state.uconv in
-    ({ state with uconv }, u)
-  in
   let ret x state = (state, x) in
   function
   | Bound i -> ret (mkRel (i + 1))
   | Sort univ ->
-    to_univ_level univ >>= fun u ->
+    to_univ_level' univ >>= fun u ->
     ret (mkSort (Sorts.sort_of_univ (Univ.Universe.make u)))
-  | Const (n, univs) ->
-    fun state ->
-      let state, univs =
-        CList.fold_left_map
-          (fun state univ -> to_univ_level univ state)
-          state univs
-      in
-      instantiate state n univs
+  | Const (n, univs) -> instantiate n univs
   | App (a, b) ->
     to_constr a >>= fun a ->
     to_constr b >>= fun b -> ret (mkApp (a, [| b |]))
@@ -411,35 +404,34 @@ let rec to_constr =
     to_constr a >>= fun a ->
     to_constr b >>= fun b -> ret (mkProd (to_annot n, a, b))
 
-and instantiate state n univs =
+and instantiate n univs state =
   assert (List.length univs < Sys.int_size);
   (* TODO what happens when is_elim and the motive is instantiated with Prop? *)
+  let univs = List.map (to_universe state.uconv.map) univs in
   let i, univs = int_of_univs univs in
   let uconv = state.uconv in
   let (state : unit state), inst =
     ensure_exists { state with uconv = () } n i
   in
-  let state = { state with uconv } in
   let motive, univs =
     if inst.is_elim then
-      match univs with [] -> assert false | m :: univs -> ([| m |], univs)
-    else ([||], univs)
+      match univs with [] -> assert false | m :: univs -> ([ m ], univs)
+    else ([], univs)
+  in
+  let subst l =
+    match Univ.Level.var_index l with
+    | None -> Univ.Universe.make l
+    | Some n -> List.nth univs n
+  in
+  let extra =
+    List.map (fun alg -> Univ.subst_univs_universe subst alg) inst.algs
+  in
+  let univs = List.concat [ univs; extra; motive ] in
+  let uconv, univs =
+    CList.fold_left_map (fun state u -> to_univ_level u state) uconv univs
   in
   let u = Univ.Instance.of_array (Array.of_list univs) in
-  let state, extra =
-    CList.fold_left_map
-      (fun acc alg ->
-        let uconv, l =
-          to_univ_level (Univ.subst_instance_universe u alg) state.uconv
-        in
-        ({ state with uconv }, l))
-      state inst.algs
-  in
-  let u =
-    Univ.Instance.of_array
-      (Array.concat [ Univ.Instance.to_array u; Array.of_list extra; motive ])
-  in
-  (state, Constr.mkRef (inst.ref, u))
+  ({ state with uconv }, Constr.mkRef (inst.ref, u))
 
 and ensure_exists (state : unit state) n i =
   try (state, state.declared |> N.Map.find n |> Int.Map.find i)
