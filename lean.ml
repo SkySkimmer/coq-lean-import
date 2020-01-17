@@ -101,6 +101,27 @@ module U = struct
   module Map = CMap.Make (Self)
 end
 
+type classified_univ = SProp | Type1 | Other
+
+let classify_univ u =
+  if Univ.Universe.is_sprop u then SProp
+  else if Univ.Universe.equal Univ.type1_univ u then Type1
+  else Other
+
+(** in lean, max(Prop+1,l)+1 <= max(Prop+1,l+1)
+   because:
+   - either l=Prop, so Prop+1 <= Prop+1
+   - or Prop+1 <= l so l+1 <= l+1
+
+   to simulate this, each named level becomes > Set and we compute maxes accordingly
+*)
+let smart_max a b =
+  match (classify_univ a, classify_univ b) with
+  | SProp, SProp | Type1, Type1 -> a
+  | Other, Other -> Univ.Universe.sup a b
+  | SProp, _ | Type1, Other -> b
+  | _, SProp | Other, Type1 -> a
+
 (** [map] goes from lean names to universes (in practice either SProp or a named level) *)
 let rec to_universe map =
   let open Univ in
@@ -108,10 +129,10 @@ let rec to_universe map =
   | U.Prop -> Universe.sprop
   | UNamed n -> Universe.make (N.Map.get n map)
   | Succ u -> Universe.super (to_universe map u)
-  | Max (a, b) -> Universe.sup (to_universe map a) (to_universe map b)
+  | Max (a, b) -> smart_max (to_universe map a) (to_universe map b)
   | IMax (a, b) ->
     let ub = to_universe map b in
-    if Universe.is_sprop ub then ub else Universe.sup (to_universe map a) ub
+    if Universe.is_sprop ub then ub else smart_max (to_universe map a) ub
 
 type uconv = {
   map : Univ.Level.t N.Map.t;  (** Map from lean names to Coq universes *)
@@ -291,10 +312,12 @@ let cst_for repr repr' =
   LMap.fold
     (fun l n -> function None -> None
       | Some strict ->
-        (match LMap.find_opt l repr' with
-        | None -> None
-        | Some n' ->
-          if n < n' then Some strict else if n = n' then Some false else None))
+        if Level.is_set l && n = 1 then Some strict
+        else (
+          match LMap.find_opt l repr' with
+          | None -> None
+          | Some n' ->
+            if n < n' then Some strict else if n = n' then Some false else None))
     repr (Some true)
 
 let smart_cst ((l, _, _) as cst) csts =
@@ -309,8 +332,18 @@ let univ_entry { map; levels } ounivs =
         if Level.is_sprop u then None else Some u)
       ounivs
   in
+  let csts =
+    match Universe.Map.find_opt Univ.type1_univ levels with
+    | None ->
+      List.fold_left
+        (fun csts l -> Constraint.add (Level.set, Lt, l) csts)
+        Constraint.empty univs
+    | Some l1 ->
+      let csts = Constraint.singleton (Level.set, Lt, l1) in
+      List.fold_left (fun csts l -> Constraint.add (l1, Le, l) csts) csts univs
+  in
   let univs, csts, algs =
-    if Universe.Map.is_empty levels then (univs, Constraint.empty, [])
+    if Universe.Map.is_empty levels then (univs, csts, [])
     else
       let univs = List.rev univs in
       (* add the new levels to univs, add constraints from each a to
@@ -341,8 +374,7 @@ let univ_entry { map; levels } ounivs =
                 csts reprs
             in
             (l :: univs, csts, alg :: algs, (l, repr) :: reprs))
-          levels
-          (univs, Constraint.empty, [], [])
+          levels (univs, csts, [], [])
       in
       let univs = List.rev univs in
       (univs, csts, algs)
@@ -819,4 +851,4 @@ let import f =
 - 562009 expression nodes
 *)
 
-(* TODO: fix instantiation with extra universes (current blocker on export/core.out) *)
+(* TODO: best line 382! *)
