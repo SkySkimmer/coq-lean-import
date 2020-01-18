@@ -9,6 +9,7 @@
 (************************************************************************)
 
 open Names
+open Univ
 
 module RRange : sig
   type +'a t
@@ -104,8 +105,8 @@ end
 type classified_univ = SProp | Type1 | Other
 
 let classify_univ u =
-  if Univ.Universe.is_sprop u then SProp
-  else if Univ.Universe.equal Univ.type1_univ u then Type1
+  if Universe.is_sprop u then SProp
+  else if Universe.equal type1_univ u then Type1
   else Other
 
 (** in lean, max(Prop+1,l)+1 <= max(Prop+1,l+1)
@@ -120,14 +121,12 @@ let classify_univ u =
 let smart_max a b =
   match (classify_univ a, classify_univ b) with
   | SProp, SProp | Type1, Type1 -> a
-  | Other, Other -> Univ.Universe.sup a b
+  | Other, Other -> Universe.sup a b
   | SProp, _ | Type1, Other -> b
   | _, SProp | Other, Type1 -> a
 
 (** [map] goes from lean names to universes (in practice either SProp or a named level) *)
-let rec to_universe map =
-  let open Univ in
-  function
+let rec to_universe map = function
   | U.Prop -> Universe.sprop
   | UNamed n -> Universe.make (N.Map.get n map)
   | Succ u -> Universe.super (to_universe map u)
@@ -137,8 +136,8 @@ let rec to_universe map =
     if Universe.is_sprop ub then ub else smart_max (to_universe map a) ub
 
 type uconv = {
-  map : Univ.Level.t N.Map.t;  (** Map from lean names to Coq universes *)
-  levels : Univ.Level.t Univ.Universe.Map.t;
+  map : Level.t N.Map.t;  (** Map from lean names to Coq universes *)
+  levels : Level.t Universe.Map.t;
       (** Map from algebraic universes to levels (only levels representing
           an algebraic) *)
 }
@@ -151,11 +150,11 @@ let lean_fancy_univs =
     ~value:true
 
 let level_of_universe u =
-  let u = Univ.Universe.repr u in
+  let u = Universe.repr u in
   let u =
     List.map
       (fun (l, n) ->
-        let open Univ.Level in
+        let open Level in
         if is_sprop l then (
           assert (n = 0);
           "SProp")
@@ -173,23 +172,20 @@ let level_of_universe u =
       u
   in
   let s = (match u with [ _ ] -> "" | _ -> "max__") ^ String.concat "_" u in
-  Univ.Level.(
-    make (UGlobal.make (DirPath.make [ Id.of_string_soft s; lean_id ]) 0))
+  Level.(make (UGlobal.make (DirPath.make [ Id.of_string_soft s; lean_id ]) 0))
 
 let level_of_universe u =
   if lean_fancy_univs () then level_of_universe u else UnivGen.fresh_level ()
 
 let to_univ_level u uconv =
-  match Univ.Universe.level u with
+  match Universe.level u with
   | Some l -> (uconv, l)
   | None ->
-    (match Univ.Universe.Map.find_opt u uconv.levels with
+    (match Universe.Map.find_opt u uconv.levels with
     | Some l -> (uconv, l)
     | None ->
       let l = level_of_universe u in
-      let uconv =
-        { uconv with levels = Univ.Universe.Map.add u l uconv.levels }
-      in
+      let uconv = { uconv with levels = Universe.Map.add u l uconv.levels } in
       (uconv, l))
 
 type binder_kind =
@@ -232,7 +228,7 @@ type notation = {
 
 type instantiation = {
   ref : GlobRef.t;
-  algs : Univ.Universe.t list;
+  algs : Universe.t list;
       (** For each extra universe, produce the algebraic it corresponds to
           (the initial universes are replaced by the appropriate Var) *)
   is_elim : bool;
@@ -264,7 +260,7 @@ let int_of_univs =
   let rec aux i acc = function
     | [] -> (i, acc)
     | u :: rest ->
-      let sprop = Univ.Universe.is_sprop u in
+      let sprop = Universe.is_sprop u in
       aux
         ((i * 2) + if sprop then 1 else 0)
         (if sprop then acc else u :: acc)
@@ -275,7 +271,7 @@ let int_of_univs =
 let univ_of_name u =
   if lean_fancy_univs () then
     let u = DirPath.make [ N.to_id u; lean_id ] in
-    Univ.Level.(make (UGlobal.make u 0))
+    Level.(make (UGlobal.make u 0))
   else UnivGen.fresh_level ()
 
 let start_uconv (state : unit state) univs i =
@@ -288,29 +284,27 @@ let start_uconv (state : unit state) univs i =
         if i mod 2 = 0 then
           let v = univ_of_name u in
           N.Map.add u v map
-        else N.Map.add u Univ.Level.sprop map
+        else N.Map.add u Level.sprop map
       in
       aux map (i / 2) univs
   in
   let map = aux N.Map.empty i univs in
-  { state with uconv = { map; levels = Univ.Universe.Map.empty } }
+  { state with uconv = { map; levels = Universe.Map.empty } }
 
 let rec make_unames univs ounivs =
   match (univs, ounivs) with
   | _, [] ->
-    List.map (fun u -> Name (Id.of_string_soft (Univ.Level.to_string u))) univs
+    List.map (fun u -> Name (Id.of_string_soft (Level.to_string u))) univs
   | _u :: univs, o :: ounivs -> N.to_name o :: make_unames univs ounivs
   | [], _ :: _ -> assert false
 
 let universe_repr u =
-  let open Univ in
   List.fold_left
     (fun repr (l, n) -> LMap.add l n repr)
     LMap.empty (Universe.repr u)
 
 (* max(a,b) <= max(a+1,b) but not strictly *)
 let cst_for repr repr' =
-  let open Univ in
   LMap.fold
     (fun l n -> function None -> None
       | Some strict ->
@@ -323,10 +317,9 @@ let cst_for repr repr' =
     repr (Some true)
 
 let smart_cst ((l, _, _) as cst) csts =
-  if Univ.Level.is_sprop l then csts else Univ.Constraint.add cst csts
+  if Level.is_sprop l then csts else Constraint.add cst csts
 
 let univ_entry { map; levels } ounivs =
-  let open Univ in
   let univs =
     CList.map_filter
       (fun u ->
@@ -335,7 +328,7 @@ let univ_entry { map; levels } ounivs =
       ounivs
   in
   let csts =
-    match Universe.Map.find_opt Univ.type1_univ levels with
+    match Universe.Map.find_opt type1_univ levels with
     | None ->
       List.fold_left
         (fun csts l -> Constraint.add (Level.set, Lt, l) csts)
@@ -422,7 +415,7 @@ let rec to_constr =
   | Bound i -> ret (mkRel (i + 1))
   | Sort univ ->
     to_univ_level' univ >>= fun u ->
-    ret (mkSort (Sorts.sort_of_univ (Univ.Universe.make u)))
+    ret (mkSort (Sorts.sort_of_univ (Universe.make u)))
   | Const (n, univs) -> instantiate n univs
   | App (a, b) ->
     to_constr a >>= fun a ->
@@ -453,18 +446,16 @@ and instantiate n univs state =
     else ([], univs)
   in
   let subst l =
-    match Univ.Level.var_index l with
-    | None -> Univ.Universe.make l
+    match Level.var_index l with
+    | None -> Universe.make l
     | Some n -> List.nth univs n
   in
-  let extra =
-    List.map (fun alg -> Univ.subst_univs_universe subst alg) inst.algs
-  in
+  let extra = List.map (fun alg -> subst_univs_universe subst alg) inst.algs in
   let univs = List.concat [ univs; extra; motive ] in
   let uconv, univs =
     CList.fold_left_map (fun state u -> to_univ_level u state) uconv univs
   in
-  let u = Univ.Instance.of_array (Array.of_list univs) in
+  let u = Instance.of_array (Array.of_list univs) in
   ({ state with uconv }, Constr.mkRef (inst.ref, u))
 
 and ensure_exists (state : unit state) n i =
