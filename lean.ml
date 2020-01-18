@@ -120,8 +120,6 @@ let rec do_n f x n = if n = 0 then x else do_n f (f x) (n - 1)
    - or Prop+1 <= l so l+1 <= l+1
 
    to simulate this, each named level becomes > Set and we compute maxes accordingly
-
-    todo I think this doesn't work, we need to postprocess the max instead
 *)
 
 let to_universe map u =
@@ -824,4 +822,7 @@ let import f =
 - 562009 expression nodes
 *)
 
-(* TODO: best line 391 in core.out *)
+(* TODO: best line 504 in core.out: entry get in ensure_exists fails on add_nat_rec 2
+   while instantiating has_add_add 1
+   while defining psum_sizeof__main 0
+ *)
