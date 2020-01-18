@@ -535,18 +535,26 @@ and declare_ind state n { params; ty; ctors; univs } i =
           })
       0 declared cnames
   in
-  let squashed =
-    (Global.lookup_mind mind).mind_packets.(0).mind_kelim == Sorts.InSProp
+  let squashed, relevant =
+    let mib = Global.lookup_mind mind in
+    let mip = mib.mind_packets.(0) in
+    (mip.mind_kelim == Sorts.InSProp, mip.mind_relevance == Sorts.Relevant)
   in
   (* TODO I think we should autodeclare both in the _rect case *)
   let elim_suffix, is_elim =
     if squashed then ("_sind", false) else ("_rect", true)
   in
-  let elim =
-    Nametab.locate
-      (Libnames.qualid_of_ident
-         (Id.of_string (Id.to_string ind_name ^ elim_suffix)))
+  let elim_id = Id.of_string (Id.to_string ind_name ^ elim_suffix) in
+  let () =
+    Indschemes.do_mutual_induction_scheme
+      [
+        ( CAst.make elim_id,
+          relevant,
+          (mind, 0),
+          if is_elim then InType else InSProp );
+      ]
   in
+  let elim = Nametab.locate (Libnames.qualid_of_ident elim_id) in
   let elim = { ref = elim; algs; is_elim } in
   let declared =
     add_declared declared (N.append n "rec") (if is_elim then 2 * i else i) elim
@@ -814,7 +822,11 @@ let rec do_input state ch =
 
 let import f =
   lcnt := 1;
-  do_input empty_state (open_in f)
+  (* we don't use autodeclared schemes to control if we use dependent elim *)
+  Flags.without_option Indschemes.elim_flag
+    (fun () -> do_input empty_state (open_in f))
+    ();
+  ()
 
 (* Lean stdlib:
 - 10244 entries
