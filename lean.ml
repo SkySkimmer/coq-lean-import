@@ -548,7 +548,9 @@ and declare_ind state n { params; ty; ctors; univs } i =
          (Id.of_string (Id.to_string ind_name ^ elim_suffix)))
   in
   let elim = { ref = elim; algs; is_elim } in
-  let declared = add_declared declared (N.append n "rec") i elim in
+  let declared =
+    add_declared declared (N.append n "rec") (if is_elim then 2 * i else i) elim
+  in
   ({ state with declared }, inst)
 
 let declare_quot state = state (* TODO *)
@@ -822,7 +824,6 @@ let import f =
 - 562009 expression nodes
 *)
 
-(* TODO: best line 504 in core.out: entry get in ensure_exists fails on add_nat_rec 2
-   while instantiating has_add_add 1
-   while defining psum_sizeof__main 0
+(* TODO: best line 742 in core.out
+   bad instantiation of eq.rec to eq_sind because bad singleton elim
  *)
