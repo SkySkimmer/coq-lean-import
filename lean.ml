@@ -789,17 +789,29 @@ let do_line state l =
 let lcnt = ref 0
 
 let finish state =
+  let max_univs, cnt =
+    N.Map.fold
+      (fun _ entry (m, cnt) ->
+        match entry with
+        | Ax { univs } | Def { univs } | Ind { univs } ->
+          let l = List.length univs in
+          (max m l, cnt + (1 lsl l)))
+      state.entries (0, 0)
+  in
   Feedback.msg_info
     Pp.(
       str "Read "
       ++ int (N.Map.cardinal state.entries)
-      ++ str " entries. Found "
+      ++ str " entries (" ++ int cnt
+      ++ str " possible instances). Found "
       ++ int (RRange.length state.univs)
       ++ str " universe expressions, "
       ++ int (RRange.length state.names)
       ++ str " names and "
       ++ int (RRange.length state.exprs)
-      ++ str " expression nodes.")
+      ++ str " expression nodes." ++ fnl ()
+      ++ str "Max universe instance length "
+      ++ int max_univs ++ str ".")
 
 let rec do_input state ch =
   match input_line ch with
@@ -829,11 +841,13 @@ let import f =
   ()
 
 (* Lean stdlib:
-- 10244 entries
+- 10244 entries (24065 possible instances)
 - 274 universe expressions
 - 28 named universes
 - 14091 names
 - 562009 expression nodes
+
+max instance length 4
 
 all inductives in the stdlib need no reduction to find their universe
 (ie the type is syntactically an arity)
