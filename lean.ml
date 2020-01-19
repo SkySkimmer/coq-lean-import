@@ -834,6 +834,10 @@ let import f =
 - 28 named universes
 - 14091 names
 - 562009 expression nodes
+
+all inductives in the stdlib need no reduction to find their universe
+(ie the type is syntactically an arity)
+however this is not a limit of the lean system
 *)
 
 (* TODO: best line 742 in core.out
