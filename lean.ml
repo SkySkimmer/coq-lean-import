@@ -264,6 +264,61 @@ type instantiation = {
           universe is the first explicit universe for Lean and after the algebraics for Coq. *)
 }
 
+(*
+Lean classifies inductives in the following way:
+- inductive landing in always >Prop (even when instantiated to all Prop) -> never squashed
+- inductive which has Prop instantiation:
+  + no constructor -> never squashed
+  + multi constructor -> always squashed
+  + 1 constructor
+    * no non param arguments
+      -> not squashed, special reduction
+      typically [eq]
+    * all arguments appear in the output type
+      -> not squashed, basic reduction
+      no real world examples? eg [Inductive foo : nat -> Prop := bar : forall x, foo x.]
+      2019 "type theory of lean" implies that there should be special reduction
+      but testing says otherwise
+    * some arguments don't appear in the output type, but are Prop or recursive
+      -> not squashed, basic reduction
+      typically [Acc], [and]
+    * some non-Prop non-recursive arguments (for some instantiation) don't appear in the output type
+      -> squashed
+      typically [exists]
+
+Additionally, the recursor is nondependent when the type is always Prop,
+otherwise dependent (including for sometimes-Prop types)
+(this implem detail isn't in the TTofLean paper)
+
+how to decide which case we're in?
+we can't use the type after instantiating for 0 as at that point
+we have already forgotten the distinction between max(1,u) and u
+
+in practice (all stdlib and mathlib) the target universe is available without reduction
+(ie syntactic arity) even though the system doesn't require it.
+so we can just look at it directly (we don't want to implement a reduction system)
+
+strictly speaking, we need to reduce the all-Prop instantiation of the type,
+and (if the type is maybe-Prop) reduce and retype the all-non-Prop
+instantiation of each constructor types (careful with fix_ctor)
+NB lemma: some instantiation is in Prop iff the all-Prop instantiation is in Prop
+
+Difference with Coq:
+- a non-Prop instantiation of possibly Prop types will never be squashed
+- non squashed possibly-Prop types at a Prop instantiation are squashed
+  (unless empty or uip branch)
+- we need uip branch for the special reduction.
+  TTofLean sounds like we need an encoding with primitive records
+  but testing indicates otherwise (all args in output type case).
+- we will always need unsafe flags for [Acc], and possibly for [and].
+
+Instantiating the type with all-Prop may side-effect instantiate
+some other globals with Prop that won't actually be used
+(assuming the inductive is not used with all-Prop)
+This probably doesn't matter much, also if we start using upfront
+instantiations it won't matter at all.
+*)
+
 type 'uconv state = {
   names : N.t RRange.t;
   exprs : expr RRange.t;
@@ -878,6 +933,10 @@ leanchecker: 8s, 80KB ram(?)
 
 Max universe instance length 10.
 0 inductives have non syntactically arity types.
+
+NB: mathlib travis checker job says "checked 68170 declarations",
+I think it counts recursors separately from the inductive
++ maybe the quotient stuff
 
 export: takes a while and eats lots of ram
 leanchecker: 6min, 1GB ram (pretty stable ram usage)
