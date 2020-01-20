@@ -788,6 +788,11 @@ let do_line state l =
 
 let lcnt = ref 0
 
+let rec is_arity = function
+  | Sort _ -> true
+  | Pi (_, _, _, b) -> is_arity b
+  | _ -> false
+
 let finish state =
   let max_univs, cnt =
     N.Map.fold
@@ -797,6 +802,14 @@ let finish state =
           let l = List.length univs in
           (max m l, cnt + (1 lsl l)))
       state.entries (0, 0)
+  in
+  let nonarities =
+    N.Map.fold
+      (fun _ entry cnt ->
+        match entry with
+        | Ax _ | Def _ -> cnt
+        | Ind ind -> if is_arity ind.ty then cnt else cnt + 1)
+      state.entries 0
   in
   Feedback.msg_info
     Pp.(
@@ -811,7 +824,8 @@ let finish state =
       ++ int (RRange.length state.exprs)
       ++ str " expression nodes." ++ fnl ()
       ++ str "Max universe instance length "
-      ++ int max_univs ++ str ".")
+      ++ int max_univs ++ str "." ++ fnl () ++ int nonarities
+      ++ str " inductives have non syntactically arity types.")
 
 let rec do_input state ch =
   match input_line ch with
@@ -847,11 +861,27 @@ let import f =
 - 14091 names
 - 562009 expression nodes
 
-max instance length 4
+Max universe instance length 4.
+0 inductives have non syntactically arity types.
 
-all inductives in the stdlib need no reduction to find their universe
-(ie the type is syntactically an arity)
-however this is not a limit of the lean system
+export: 46s, 450KB ram(?)
+leanchecker: 8s, 80KB ram(?)
+*)
+
+(* mathlib:
+- 66400 entries (275215 possible instances)
+- 2707 universe expressions
+- 87141 names
+- 8013226 expression nodes
+
+Max universe instance length 10.
+0 inductives have non syntactically arity types.
+
+export: takes a while and eats lots of ram
+leanchecker: 6min, 1GB ram (pretty stable ram usage)
+
+Coq takes 690KB ram in just parsing mode
+
 *)
 
 (* TODO: best line 742 in core.out
