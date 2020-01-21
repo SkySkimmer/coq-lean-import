@@ -330,6 +330,17 @@ type squashy =
           (** Self descriptive. We handle necessity of unsafe flags per-instantiation. *)
     }
 
+let pp_squashy =
+  let open Pp in
+  function
+  | NoProp -> str "is never Prop"
+  | MaybeProp { always_prop; lean_squashed } ->
+    (if always_prop then str "is always Prop" else str "may be Prop")
+    ++ spc ()
+    ++
+    if lean_squashed then str "and is squashed by Lean"
+    else str "and is not squashed by Lean"
+
 type 'uconv state = {
   names : N.t RRange.t;
   exprs : expr RRange.t;
@@ -544,15 +555,16 @@ and declare_ax state n { ty; univs } i =
   let declared = add_declared state.declared n i inst in
   ({ state with declared }, inst)
 
+and to_params state params =
+  CList.fold_left_map
+    (fun state (_bk, p, ty) ->
+      let state, ty = to_constr ty state in
+      (state, Context.Rel.Declaration.LocalAssum (to_annot p, ty)))
+    state params
+
 and declare_ind state n { params; ty; ctors; univs } i =
   let state = start_uconv state univs i in
-  let state, params =
-    CList.fold_left_map
-      (fun state (_bk, p, ty) ->
-        let state, ty = to_constr ty state in
-        (state, Context.Rel.Declaration.LocalAssum (to_annot p, ty)))
-      state params
-  in
+  let state, params = to_params state params in
   let params = List.rev params in
   let state, ty = to_constr ty state in
   let state, ctors =
@@ -630,9 +642,85 @@ and declare_ind state n { params; ty; ctors; univs } i =
   in
   ({ state with declared }, inst)
 
-let declare_quot state = state (* TODO *)
+(** Generate and add the squashy info *)
+let squashify state n { params; ty; ctors; univs } =
+  let stateP =
+    (* NB: if univs = [] this is just instantiation 0 *)
+    start_uconv state univs ((1 lsl List.length univs) - 1)
+  in
+  let stateP, paramsP = to_params stateP params in
+  let stateP, tyP = to_constr ty stateP in
+  let envP =
+    Environ.push_rel_context paramsP
+      (Environ.set_universes (Global.env ()) stateP.uconv.graph)
+  in
+  let _, sortP = Reduction.dest_arity envP tyP in
+  if not (Sorts.is_sprop sortP) then NoProp
+  else
+    let stateT = start_uconv state univs 0 in
+    let stateT, paramsT = to_params stateT params in
+    let stateT, tyT = to_constr ty stateT in
+    let envT =
+      Environ.push_rel_context paramsT
+        (Environ.set_universes (Global.env ()) stateT.uconv.graph)
+    in
+    let _, sortT = Reduction.dest_arity envT tyT in
+    let always_prop = Sorts.is_sprop sortT in
+    match ctors with
+    | [] -> MaybeProp { always_prop; lean_squashed = false }
+    | _ :: _ :: _ -> MaybeProp { always_prop; lean_squashed = true }
+    | [ (_, ctor) ] ->
+      let stateT, ctorT = to_constr ctor stateT in
+      let envT =
+        Environ.push_rel_context paramsT
+          (Environ.push_rel
+             (LocalAssum
+                ( Context.make_annot (N.to_name n)
+                    (Sorts.relevance_of_sort sortT),
+                  Term.it_mkProd_or_LetIn tyT paramsT ))
+             (Environ.set_universes (Global.env ()) stateT.uconv.graph))
+      in
+      let args, out = Reduction.dest_prod envT ctorT in
+      let forced =
+        (* NB dest_prod returns [out] in whnf *)
+        let _, outargs = Constr.decompose_appvect out in
+        Array.fold_left
+          (fun forced arg ->
+            match Constr.kind arg with
+            | Rel i -> Int.Set.add i forced
+            | _ -> forced)
+          Int.Set.empty outargs
+      in
+      let sigma = Evd.from_env envT in
+      let npars = List.length params in
+      let nargs = List.length args in
+      let lean_squashed, _, _ =
+        Context.Rel.fold_outside
+          (fun d (squashed, i, envT) ->
+            let squashed =
+              if squashed then true
+              else if Int.Set.mem (nargs - i) forced then false
+              else
+                let t = Context.Rel.Declaration.get_type d in
+                if not (Vars.noccurn (npars + i) t) then
+                  (* recursive argument *)
+                  false
+                else
+                  not
+                    (Sorts.is_sprop
+                       (Retyping.get_sort_of envT sigma (EConstr.of_constr t)))
+            in
 
-let _ = to_constr
+            (squashed, i + 1, Environ.push_rel d envT))
+          args ~init:(false, 0, envT)
+      in
+      MaybeProp { always_prop; lean_squashed }
+
+let squashify state n ind =
+  let s = squashify state n ind in
+  { state with squash_info = N.Map.add n s state.squash_info }
+
+let declare_quot state = state (* TODO *)
 
 let empty_state =
   {
@@ -759,7 +847,10 @@ let do_line state l =
     let univs = List.map (get_name state) univs in
     let ind = { params; ty; ctors; univs } in
     let state =
-      if just_parse () then state else fst (declare_ind state name ind 0)
+      if just_parse () then state
+      else
+        let state = squashify state name ind in
+        fst (declare_ind state name ind 0)
     in
     add_entry state name (Ind ind)
   | [ "#QUOT" ] -> if just_parse () then state else declare_quot state
@@ -881,6 +972,12 @@ let finish state =
         | Ind ind -> if is_arity ind.ty then cnt else cnt + 1)
       state.entries 0
   in
+  let squashes =
+    N.Map.fold
+      (fun n s pp -> Pp.(pp ++ fnl () ++ N.pp n ++ spc () ++ pp_squashy s))
+      state.squash_info
+      Pp.(mt ())
+  in
   Feedback.msg_info
     Pp.(
       str "Read "
@@ -895,7 +992,8 @@ let finish state =
       ++ str " expression nodes." ++ fnl ()
       ++ str "Max universe instance length "
       ++ int max_univs ++ str "." ++ fnl () ++ int nonarities
-      ++ str " inductives have non syntactically arity types.")
+      ++ str " inductives have non syntactically arity types."
+      ++ squashes)
 
 let rec do_input state ch =
   match input_line ch with
@@ -910,6 +1008,7 @@ let rec do_input state ch =
     | exception e ->
       let e = CErrors.push e in
       close_in ch;
+      finish state;
       Feedback.msg_info
         Pp.(
           str "issue at line " ++ int !lcnt
