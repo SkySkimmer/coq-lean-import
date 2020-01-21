@@ -637,6 +637,11 @@ and declare_ind state n { params; ty; ctors; univs } i =
     if squashy.lean_squashes || not coq_squashes then act ()
     else with_unsafe_univs act ()
   in
+  assert (
+    squashy.lean_squashes
+    || (Global.lookup_mind mind).mind_packets.(0).mind_kelim == InType);
+
+  (* add ind and ctors to [declared] *)
   let inst = { ref = GlobRef.IndRef (mind, 0); algs; is_large_elim = false } in
   let declared = add_declared state.declared n i inst in
   let declared =
