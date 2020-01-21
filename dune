@@ -4,6 +4,6 @@
  (synopsis "Import Lean proofs into Coq!")
  (wrapped false)
  (libraries coq.vernac)
- (flags :standard -w -40-60))
+ (flags :standard -w -40-60-37))
 
 (coq.pp (modules g_lean))

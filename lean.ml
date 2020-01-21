@@ -289,6 +289,7 @@ Lean classifies inductives in the following way:
 Additionally, the recursor is nondependent when the type is always Prop,
 otherwise dependent (including for sometimes-Prop types)
 (this implem detail isn't in the TTofLean paper)
+Special reduction also seems restricted to always-Prop types.
 
 how to decide which case we're in?
 we can't use the type after instantiating for 0 as at that point
@@ -319,12 +320,23 @@ This probably doesn't matter much, also if we start using upfront
 instantiations it won't matter at all.
 *)
 
+type squashy =
+  | NoProp  (** Type cannot be in Prop *)
+  | MaybeProp of {
+      always_prop : bool;
+          (** controls whether the lean eliminator is dependent (and
+              special reduction, but we just let Coq do its thing for that). *)
+      lean_squashed : bool;
+          (** Self descriptive. We handle necessity of unsafe flags per-instantiation. *)
+    }
+
 type 'uconv state = {
   names : N.t RRange.t;
   exprs : expr RRange.t;
   univs : U.t RRange.t;
   uconv : 'uconv;
   entries : entry N.Map.t;
+  squash_info : squashy N.Map.t;
   declared : instantiation Int.Map.t N.Map.t;
       (** For each name, the instantiation with all non-sprop univs should
      always be declared, but the instantiations with SProp are lazily
@@ -629,6 +641,7 @@ let empty_state =
     univs = RRange.singleton U.Prop;
     uconv = ();
     entries = N.Map.empty;
+    squash_info = N.Map.empty;
     declared = N.Map.empty;
     notations = [];
   }
