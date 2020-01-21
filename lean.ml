@@ -608,25 +608,25 @@ and declare_ind state n { params; ty; ctors; univs } i =
     (mip.mind_kelim == Sorts.InSProp, mip.mind_relevance == Sorts.Relevant)
   in
   (* TODO I think we should autodeclare both in the _rect case *)
-  let elim_suffix, is_large_elim =
-    if squashed then ("_sind", false) else ("_rect", true)
+  let elims =
+    if squashed then [ ("_sind", Sorts.InSProp) ]
+    else [ ("_rect", InType); ("_sind", InSProp) ]
   in
-  let elim_id = Id.of_string (Id.to_string ind_name ^ elim_suffix) in
-  let () =
-    Indschemes.do_mutual_induction_scheme
-      [
-        ( CAst.make elim_id,
-          relevant,
-          (mind, 0),
-          if is_large_elim then InType else InSProp );
-      ]
-  in
-  let elim = Nametab.locate (Libnames.qualid_of_ident elim_id) in
-  let elim = { ref = elim; algs; is_large_elim } in
+  let nrec = N.append n "rec" in
   let declared =
-    add_declared declared (N.append n "rec")
-      (if is_large_elim then 2 * i else i)
-      elim
+    List.fold_left
+      (fun declared (suffix, sort) ->
+        let id = Id.of_string (Id.to_string ind_name ^ suffix) in
+        Indschemes.do_mutual_induction_scheme
+          [ (CAst.make id, relevant, (mind, 0), sort) ];
+        let elim = Nametab.locate (Libnames.qualid_of_ident id) in
+        let elim = { ref = elim; algs; is_large_elim = sort == InType } in
+        let j =
+          (* should be lean_squashed *)
+          if squashed then i else if sort == InType then 2 * i else (2 * i) + 1
+        in
+        add_declared declared nrec j elim)
+      declared elims
   in
   ({ state with declared }, inst)
 
