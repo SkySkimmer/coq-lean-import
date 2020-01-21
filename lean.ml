@@ -259,7 +259,7 @@ type instantiation = {
   algs : Universe.t list;
       (** For each extra universe, produce the algebraic it corresponds to
           (the initial universes are replaced by the appropriate Var) *)
-  is_elim : bool;
+  is_large_elim : bool;
       (** When declaring the eliminator for an inductive, the motive's
           universe is the first explicit universe for Lean and after the algebraics for Coq. *)
 }
@@ -411,7 +411,7 @@ let rec to_constr =
 
 and instantiate n univs state =
   assert (List.length univs < Sys.int_size);
-  (* TODO what happens when is_elim and the motive is instantiated with Prop? *)
+  (* TODO what happens when is_large_elim and the motive is instantiated with Prop? *)
   let univs = List.map (to_universe state.uconv.map) univs in
   let i, univs = int_of_univs univs in
   let uconv = state.uconv in
@@ -419,7 +419,7 @@ and instantiate n univs state =
     ensure_exists { state with uconv = () } n i
   in
   let motive, univs =
-    if inst.is_elim then
+    if inst.is_large_elim then
       match univs with [] -> assert false | m :: univs -> ([ m ], univs)
     else ([], univs)
   in
@@ -459,7 +459,7 @@ and declare_def state n { ty; body; univs } i =
     DeclareDef.declare_definition ~scope ~name:(name_for n i) ~kind
       UnivNames.empty_binders entry []
   in
-  let inst = { ref; algs; is_elim = false } in
+  let inst = { ref; algs; is_large_elim = false } in
   let declared = add_declared state.declared n i inst in
   ({ state with declared }, inst)
 
@@ -473,7 +473,7 @@ and declare_ax state n { ty; univs } i =
       ~kind:Decls.(IsAssumption Definitional)
       entry
   in
-  let inst = { ref = GlobRef.ConstRef c; algs; is_elim = false } in
+  let inst = { ref = GlobRef.ConstRef c; algs; is_large_elim = false } in
   let declared = add_declared state.declared n i inst in
   ({ state with declared }, inst)
 
@@ -522,7 +522,7 @@ and declare_ind state n { params; ty; ctors; univs } i =
     DeclareInd.declare_mutual_inductive_with_eliminations entry
       UnivNames.empty_binders []
   in
-  let inst = { ref = GlobRef.IndRef (mind, 0); algs; is_elim = false } in
+  let inst = { ref = GlobRef.IndRef (mind, 0); algs; is_large_elim = false } in
   let declared = add_declared state.declared n i inst in
   let declared =
     CList.fold_left_i
@@ -531,7 +531,7 @@ and declare_ind state n { params; ty; ctors; univs } i =
           {
             ref = GlobRef.ConstructRef ((mind, 0), cnum + 1);
             algs;
-            is_elim = false;
+            is_large_elim = false;
           })
       0 declared cnames
   in
@@ -541,7 +541,7 @@ and declare_ind state n { params; ty; ctors; univs } i =
     (mip.mind_kelim == Sorts.InSProp, mip.mind_relevance == Sorts.Relevant)
   in
   (* TODO I think we should autodeclare both in the _rect case *)
-  let elim_suffix, is_elim =
+  let elim_suffix, is_large_elim =
     if squashed then ("_sind", false) else ("_rect", true)
   in
   let elim_id = Id.of_string (Id.to_string ind_name ^ elim_suffix) in
@@ -551,13 +551,15 @@ and declare_ind state n { params; ty; ctors; univs } i =
         ( CAst.make elim_id,
           relevant,
           (mind, 0),
-          if is_elim then InType else InSProp );
+          if is_large_elim then InType else InSProp );
       ]
   in
   let elim = Nametab.locate (Libnames.qualid_of_ident elim_id) in
-  let elim = { ref = elim; algs; is_elim } in
+  let elim = { ref = elim; algs; is_large_elim } in
   let declared =
-    add_declared declared (N.append n "rec") (if is_elim then 2 * i else i) elim
+    add_declared declared (N.append n "rec")
+      (if is_large_elim then 2 * i else i)
+      elim
   in
   ({ state with declared }, inst)
 
