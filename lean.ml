@@ -303,18 +303,9 @@ otherwise dependent (including for sometimes-Prop types)
 (this implem detail isn't in the TTofLean paper)
 Special reduction also seems restricted to always-Prop types.
 
-how to decide which case we're in?
-we can't use the type after instantiating for 0 as at that point
-we have already forgotten the distinction between max(1,u) and u
-
-in practice (all stdlib and mathlib) the target universe is available without reduction
+NB: in practice (all stdlib and mathlib) the target universe is available without reduction
 (ie syntactic arity) even though the system doesn't require it.
 so we can just look at it directly (we don't want to implement a reduction system)
-
-strictly speaking, we need to reduce the all-Prop instantiation of the type,
-and (if the type is maybe-Prop) reduce and retype the all-non-Prop
-instantiation of each constructor types (careful with fix_ctor)
-NB lemma: some instantiation is in Prop iff the all-Prop instantiation is in Prop
 
 Difference with Coq:
 - a non-Prop instantiation of possibly Prop types will never be squashed
@@ -688,12 +679,13 @@ let squashify state n { params; ty; ctors; univs } =
   in
   let stateP, paramsP = to_params stateP params in
   let stateP, tyP = to_constr ty stateP in
+  let state = { state with declared = stateP.declared } in
   let envP =
     Environ.push_rel_context paramsP
       (Environ.set_universes (Global.env ()) stateP.uconv.graph)
   in
   let _, sortP = Reduction.dest_arity envP tyP in
-  if not (Sorts.is_sprop sortP) then noprop
+  if not (Sorts.is_sprop sortP) then (state, noprop)
   else
     let stateT = start_uconv state univs 0 in
     let stateT, paramsT = to_params stateT params in
@@ -705,8 +697,12 @@ let squashify state n { params; ty; ctors; univs } =
     let _, sortT = Reduction.dest_arity envT tyT in
     let always_prop = Sorts.is_sprop sortT in
     match ctors with
-    | [] -> { maybe_prop = true; always_prop; lean_squashes = false }
-    | _ :: _ :: _ -> { maybe_prop = true; always_prop; lean_squashes = true }
+    | [] ->
+      ( { state with declared = stateT.declared },
+        { maybe_prop = true; always_prop; lean_squashes = false } )
+    | _ :: _ :: _ ->
+      ( { state with declared = stateT.declared },
+        { maybe_prop = true; always_prop; lean_squashes = true } )
     | [ (_, ctor) ] ->
       let stateT, ctorT = to_constr ctor stateT in
       let envT =
@@ -752,10 +748,11 @@ let squashify state n { params; ty; ctors; univs } =
             (squashed, i + 1, Environ.push_rel d envT))
           args ~init:(false, 0, envT)
       in
-      { maybe_prop = true; always_prop; lean_squashes }
+      ( { state with declared = stateT.declared },
+        { maybe_prop = true; always_prop; lean_squashes } )
 
 let squashify state n ind =
-  let s = squashify state n ind in
+  let state, s = squashify state n ind in
   { state with squash_info = N.Map.add n s state.squash_info }
 
 let declare_quot state = state (* TODO *)
