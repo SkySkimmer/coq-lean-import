@@ -1091,4 +1091,11 @@ Coq takes 690KB ram in just parsing mode
 *)
 
 (* TODO: best line 4657 in core.out
+   on an inductive with a contructor which takes multiple arguments, Coq generates a scheme
+   where the function for that constructor has type [recarg1 -> Hind1 -> recarg2 -> Hind2 -> res]
+   but Lean generates [recarg1 -> recarg2 -> Hind1 -> Hind2 -> res]
+
+   I guess we should manually generate schemes (and take advantage to get rid of is_large_elim)
+   that or rewrite recursors like we do for is_large_elim,
+   but this may require eta expansion so let's not
  *)
