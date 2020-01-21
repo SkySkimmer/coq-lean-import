@@ -432,13 +432,14 @@ let rec make_unames univs ounivs =
   | [], _ :: _ -> assert false
 
 let univ_entry { map; levels; graph } ounivs =
-  let univs =
+  let ounivs =
     CList.map_filter
       (fun u ->
-        let u = N.Map.get u map in
-        if Level.is_sprop u then None else Some u)
+        let v = N.Map.get u map in
+        if Level.is_sprop v then None else Some (u, v))
       ounivs
   in
+  let ounivs, univs = List.split ounivs in
   let univs, algs =
     if Universe.Map.is_empty levels then (univs, [])
     else
@@ -1089,5 +1090,5 @@ Coq takes 690KB ram in just parsing mode
 
 *)
 
-(* TODO: best line 4117 in core.out
+(* TODO: best line 4657 in core.out
  *)
