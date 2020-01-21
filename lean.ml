@@ -11,6 +11,18 @@
 open Names
 open Univ
 
+let with_unsafe_univs f () =
+  let flags = Global.typing_flags () in
+  Global.set_typing_flags { flags with check_universes = false };
+  try
+    let v = f () in
+    Global.set_typing_flags flags;
+    v
+  with e ->
+    let e = CErrors.push e in
+    Global.set_typing_flags flags;
+    Exninfo.iraise e
+
 module RRange : sig
   type +'a t
   (** Like Range.t, but instead of cons we append *)
@@ -320,26 +332,40 @@ This probably doesn't matter much, also if we start using upfront
 instantiations it won't matter at all.
 *)
 
-type squashy =
-  | NoProp  (** Type cannot be in Prop *)
-  | MaybeProp of {
-      always_prop : bool;
-          (** controls whether the lean eliminator is dependent (and
+type squashy = {
+  maybe_prop : bool;  (** used for optim, not fundamental *)
+  always_prop : bool;
+      (** controls whether the lean eliminator is dependent (and
               special reduction, but we just let Coq do its thing for that). *)
-      lean_squashed : bool;
-          (** Self descriptive. We handle necessity of unsafe flags per-instantiation. *)
-    }
+  lean_squashes : bool;
+      (** Self descriptive. We handle necessity of unsafe flags per-instantiation. *)
+}
 
-let pp_squashy =
+let noprop = { maybe_prop = false; always_prop = false; lean_squashes = false }
+
+let pp_squashy { maybe_prop; always_prop; lean_squashes } =
   let open Pp in
-  function
-  | NoProp -> str "is never Prop"
-  | MaybeProp { always_prop; lean_squashed } ->
-    (if always_prop then str "is always Prop" else str "may be Prop")
-    ++ spc ()
-    ++
-    if lean_squashed then str "and is squashed by Lean"
-    else str "and is not squashed by Lean"
+  (if maybe_prop then
+   if always_prop then str "is always Prop" else str "may be Prop"
+  else str "is never Prop")
+  ++ spc ()
+  ++
+  if lean_squashes then str "and is squashed by Lean"
+  else str "and is not squashed by Lean"
+
+let coq_squashes graph (entry : Entries.mutual_inductive_entry) =
+  let env = Global.env () in
+  let env = Environ.set_universes env graph in
+  let ind =
+    match entry.mind_entry_inds with [ ind ] -> ind | _ -> assert false
+  in
+  let params = entry.mind_entry_params in
+  let ty = ind.mind_entry_arity in
+  let env_params = Environ.push_rel_context params env in
+  let _, s = Reduction.dest_arity env_params ty in
+  (* TODO merge with uip branch *)
+  if not (Sorts.is_sprop s) then false
+  else match ind.mind_entry_lc with [] -> false | _ :: _ -> true
 
 type 'uconv state = {
   names : N.t RRange.t;
@@ -575,6 +601,7 @@ and declare_ind state n { params; ty; ctors; univs } i =
       state ctors
   in
   let cnames, ctys = List.split ctors in
+  let graph = state.uconv.graph in
   let state, (univs, algs) = finish_uconv state univs in
   let ind_name = name_for n i in
   let entry =
@@ -597,9 +624,17 @@ and declare_ind state n { params; ty; ctors; univs } i =
       mind_entry_cumulative = false;
     }
   in
+  let squashy = N.Map.get n state.squash_info in
+  let coq_squashes =
+    if squashy.maybe_prop then coq_squashes graph entry else false
+  in
   let mind =
-    DeclareInd.declare_mutual_inductive_with_eliminations entry
-      UnivNames.empty_binders []
+    let act () =
+      DeclareInd.declare_mutual_inductive_with_eliminations entry
+        UnivNames.empty_binders []
+    in
+    if squashy.lean_squashes || not coq_squashes then act ()
+    else with_unsafe_univs act ()
   in
   let inst = { ref = GlobRef.IndRef (mind, 0); algs; is_large_elim = false } in
   let declared = add_declared state.declared n i inst in
@@ -614,14 +649,10 @@ and declare_ind state n { params; ty; ctors; univs } i =
           })
       0 declared cnames
   in
-  let squashed, relevant =
-    let mib = Global.lookup_mind mind in
-    let mip = mib.mind_packets.(0) in
-    (mip.mind_kelim == Sorts.InSProp, mip.mind_relevance == Sorts.Relevant)
-  in
-  (* TODO I think we should autodeclare both in the _rect case *)
+
+  (* elim *)
   let elims =
-    if squashed then [ ("_sind", Sorts.InSProp) ]
+    if squashy.lean_squashes then [ ("_sind", Sorts.InSProp) ]
     else [ ("_rect", InType); ("_sind", InSProp) ]
   in
   let nrec = N.append n "rec" in
@@ -630,12 +661,13 @@ and declare_ind state n { params; ty; ctors; univs } i =
       (fun declared (suffix, sort) ->
         let id = Id.of_string (Id.to_string ind_name ^ suffix) in
         Indschemes.do_mutual_induction_scheme
-          [ (CAst.make id, relevant, (mind, 0), sort) ];
+          [ (CAst.make id, not squashy.always_prop, (mind, 0), sort) ];
         let elim = Nametab.locate (Libnames.qualid_of_ident id) in
         let elim = { ref = elim; algs; is_large_elim = sort == InType } in
         let j =
-          (* should be lean_squashed *)
-          if squashed then i else if sort == InType then 2 * i else (2 * i) + 1
+          if squashy.lean_squashes then i
+          else if sort == InType then 2 * i
+          else (2 * i) + 1
         in
         add_declared declared nrec j elim)
       declared elims
@@ -655,7 +687,7 @@ let squashify state n { params; ty; ctors; univs } =
       (Environ.set_universes (Global.env ()) stateP.uconv.graph)
   in
   let _, sortP = Reduction.dest_arity envP tyP in
-  if not (Sorts.is_sprop sortP) then NoProp
+  if not (Sorts.is_sprop sortP) then noprop
   else
     let stateT = start_uconv state univs 0 in
     let stateT, paramsT = to_params stateT params in
@@ -667,8 +699,8 @@ let squashify state n { params; ty; ctors; univs } =
     let _, sortT = Reduction.dest_arity envT tyT in
     let always_prop = Sorts.is_sprop sortT in
     match ctors with
-    | [] -> MaybeProp { always_prop; lean_squashed = false }
-    | _ :: _ :: _ -> MaybeProp { always_prop; lean_squashed = true }
+    | [] -> { maybe_prop = true; always_prop; lean_squashes = false }
+    | _ :: _ :: _ -> { maybe_prop = true; always_prop; lean_squashes = true }
     | [ (_, ctor) ] ->
       let stateT, ctorT = to_constr ctor stateT in
       let envT =
@@ -694,7 +726,7 @@ let squashify state n { params; ty; ctors; univs } =
       let sigma = Evd.from_env envT in
       let npars = List.length params in
       let nargs = List.length args in
-      let lean_squashed, _, _ =
+      let lean_squashes, _, _ =
         Context.Rel.fold_outside
           (fun d (squashed, i, envT) ->
             let squashed =
@@ -714,7 +746,7 @@ let squashify state n { params; ty; ctors; univs } =
             (squashed, i + 1, Environ.push_rel d envT))
           args ~init:(false, 0, envT)
       in
-      MaybeProp { always_prop; lean_squashed }
+      { maybe_prop = true; always_prop; lean_squashes }
 
 let squashify state n ind =
   let s = squashify state n ind in
@@ -1057,6 +1089,5 @@ Coq takes 690KB ram in just parsing mode
 
 *)
 
-(* TODO: best line 742 in core.out
-   bad instantiation of eq.rec to eq_sind because bad singleton elim
+(* TODO: best line 4117 in core.out
  *)
