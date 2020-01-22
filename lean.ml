@@ -93,17 +93,18 @@ let lean_scheme env ~dep mind u s =
       Indrec.build_induction_scheme env sigma
         ((mind, 0), u)
         dep
-        (if Option.is_empty s then InSProp else InType)
+        (if Level.is_sprop s then InSProp else InType)
     in
     let uctx = Evd.universe_context_set sigma in
-    match s with
-    | None ->
+    if Level.is_sprop s then begin
       assert (ContextSet.is_empty uctx);
       body
-    | Some s ->
+    end
+    else begin
       assert (LSet.cardinal (fst uctx) = 1 && Constraint.is_empty (snd uctx));
       let v = LSet.choose (fst uctx) in
       Vars.subst_univs_level_constr (LMap.singleton v s) body
+    end
   in
 
   assert (
@@ -833,7 +834,7 @@ and declare_ind state n { params; ty; ctors; univs } i =
                       (Array.append [| u |] (Instance.to_array inst)),
                     csts ) ) )
     in
-    (lean_scheme env ~dep:(not squashy.always_prop) mind inst (Some u), uentry)
+    (lean_scheme env ~dep:(not squashy.always_prop) mind inst u, uentry)
   in
   let nrec = N.append n "rec" in
   let elims =
@@ -1239,6 +1240,7 @@ let rec do_input state ch =
     close_in ch;
     finish state
   | l ->
+    let () = if !lcnt = 10758 then Feedback.msg_info Pp.(str "ehe") in
     (match do_line state l with
     | state ->
       incr lcnt;
@@ -1295,5 +1297,9 @@ Coq takes 690KB ram in just parsing mode
 
 *)
 
-(* TODO: best line 5447 in core.out "case analysis not allowed at Top.xxx for [or]"
+(* TODO: best line 10758 in core.out
+   takes very long (quasy loop) comparing prec.max with 1024
+   here 1024 means the bit wise representation of 1024 (so basically 2 * 2 * 2 * ...)
+   and prec.max is defined to be 1024
+   the problem is that Coq unfolds the head of 1024 first...
  *)
