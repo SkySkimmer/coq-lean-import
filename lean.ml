@@ -10,6 +10,175 @@
 
 open Names
 open Univ
+module RelDecl = Context.Rel.Declaration
+
+let __ () = assert false
+
+let invalid = Constr.(mkApp (mkSet, [| mkSet |]))
+
+(** produce [args, recargs] inside mixed context [args/recargs]
+    [info] is in reverse order, ie the head is about the last arg in application order
+
+    examples:
+    [] -> [],[]
+    [false] -> [1],[]
+    [true] -> [2],[1]
+    [true;false] -> [3;2],[1]
+    [false;true] -> [3;1],[2]
+    [false;false] -> [2;1],[]
+    [true;true] -> [4;2],[3;1]
+
+*)
+let reorder_inside_core info =
+  let rec aux i args recargs = function
+    | [] -> (args, recargs)
+    | false :: info -> aux (i + 1) (i :: args) recargs info
+    | true :: info -> aux (i + 2) ((i + 1) :: args) (i :: recargs) info
+  in
+  aux 1 [] [] info
+
+let reorder_inside info =
+  let args, recargs = reorder_inside_core info in
+  CArray.map_of_list Constr.mkRel (List.append args recargs)
+
+let rec insert_after k ((n, t) as v) c =
+  if k = 0 then Constr.mkProd (n, t, Vars.lift 1 c)
+  else
+    match Constr.kind c with
+    | Prod (na, a, b) -> Constr.mkProd (na, a, insert_after (k - 1) v b)
+    | _ -> assert false
+
+let insert_after k (n, t) c =
+  insert_after k (n, Vars.lift k t) (Vars.subst1 invalid c)
+
+let rec reorder_outside info hyps c =
+  match (info, hyps) with
+  | [], [] -> (c, 0)
+  | false :: info, (n, t) :: hyps ->
+    let c, k = reorder_outside info hyps c in
+    (Constr.mkProd (n, t, c), k + 1)
+  | true :: info, (n, t) :: rhyp :: hyps ->
+    let c, k = reorder_outside info hyps c in
+    let c = insert_after k rhyp c in
+    (Constr.mkProd (n, t, c), k + 1)
+  | _ -> assert false
+
+(** produce [forall args recargs, P (C args)] from mixed [forall args/recargs, P (C args)] *)
+let reorder_outside info ft =
+  let hyps, out = Term.decompose_prod ft in
+  fst (reorder_outside (List.rev info) (List.rev hyps) out)
+
+(** Build the body of a Lean-style scheme. [u] instantiates the
+    inductive, [s] is [None] for the SProp scheme and [Some l]
+    for a scheme with motive [l].
+
+    Lean schemes differ from Coq schemes:
+    - the motive universe is the first bound universe for Lean
+      but the last for Coq (handled by caller)
+    - Lean puts induction hypotheses after all the constructor arguments,
+      Coq puts them immediately after the corresponding recursive argument.
+ *)
+let lean_scheme env ~dep mind u s =
+  let mib = Global.lookup_mind mind in
+  let nparams = mib.mind_nparams in
+  assert (Array.length mib.mind_packets = 1);
+  (* if we start using non recursive params in the translation it will
+     involve reordering arguments *)
+  assert (nparams = mib.mind_nparams_rec);
+  let mip = mib.mind_packets.(0) in
+
+  let body =
+    let sigma = Evd.from_env env in
+    let sigma, body =
+      Indrec.build_induction_scheme env sigma
+        ((mind, 0), u)
+        dep
+        (if Option.is_empty s then InSProp else InType)
+    in
+    let uctx = Evd.universe_context_set sigma in
+    match s with
+    | None ->
+      assert (ContextSet.is_empty uctx);
+      body
+    | Some s ->
+      assert (LSet.cardinal (fst uctx) = 1 && Constraint.is_empty (snd uctx));
+      let v = LSet.choose (fst uctx) in
+      Vars.subst_univs_level_constr (LMap.singleton v s) body
+  in
+
+  assert (
+    CArray.for_all2 Int.equal mip.mind_consnrealargs mip.mind_consnrealdecls);
+  let recinfo =
+    Array.mapi
+      (fun i (args, _) ->
+        let nargs = mip.mind_consnrealargs.(i) in
+        (* skip params *)
+        let args = CList.firstn nargs args in
+        CList.map_i
+          (fun j arg ->
+            let t = RelDecl.get_type arg in
+            not (Vars.noccurn (nargs + nparams - j) t))
+          0 args)
+      mip.mind_nf_lc
+  in
+  let hasrec =
+    (* NB: if the only recursive arg is the last arg, no need for reordering *)
+    Array.exists
+      (function [] -> false | _ :: info -> List.exists (fun x -> x) info)
+      recinfo
+  in
+
+  if not hasrec then body
+  else
+    (* body := fun params P (fc : forall args/recargs, P (C args)) => ...
+
+     becomes
+
+     fun params P (fc : forall args, forall recargs, P (C args)) =>
+     body params P (fun args/recargs, fc args recargs)
+    *)
+    let open Constr in
+    let nlc = Array.length recinfo in
+    let paramsP, inside = Term.decompose_lam_n_assum (nparams + 1) body in
+    let fcs, inside = Term.decompose_lam_n nlc inside in
+    let fcs = List.rev fcs in
+
+    let body =
+      mkApp
+        (body, Array.init (nparams + 1) (fun i -> mkRel (nlc + nparams + 1 - i)))
+    in
+    let body =
+      mkApp
+        ( body,
+          Array.of_list
+            (CList.map_i
+               (fun i (_, ft) ->
+                 let info = recinfo.(i) in
+                 if not (List.exists (fun x -> x) info) then mkRel (nlc - i)
+                 else
+                   let hyps, _ = Term.decompose_prod ft in
+                   let args = reorder_inside info in
+                   Term.it_mkLambda_or_LetIn
+                     (mkApp (mkRel (nlc - i + List.length hyps), args))
+                     (List.map (fun (n, t) -> RelDecl.LocalAssum (n, t)) hyps))
+               0 fcs) )
+    in
+
+    let fcs =
+      CList.map_i
+        (fun i (n, ft) ->
+          let info = recinfo.(i) in
+          let ft = reorder_outside info ft in
+          RelDecl.LocalAssum (n, ft))
+        0 fcs
+    in
+    let fcs = List.rev fcs in
+    let body =
+      let env = Environ.push_rel_context paramsP env in
+      let env = Environ.push_rel_context fcs env in
+      Reduction.nf_betaiota env body
+    in
+    Term.it_mkLambda_or_LetIn (Term.it_mkLambda_or_LetIn body fcs) paramsP
 
 let with_unsafe_univs f () =
   let flags = Global.typing_flags () in
@@ -271,9 +440,6 @@ type instantiation = {
   algs : Universe.t list;
       (** For each extra universe, produce the algebraic it corresponds to
           (the initial universes are replaced by the appropriate Var) *)
-  is_large_elim : bool;
-      (** When declaring the eliminator for an inductive, the motive's
-          universe is the first explicit universe for Lean and after the algebraics for Coq. *)
 }
 
 (*
@@ -514,18 +680,13 @@ and instantiate n univs state =
   let (state : unit state), inst =
     ensure_exists { state with uconv = () } n i
   in
-  let motive, univs =
-    if inst.is_large_elim then
-      match univs with [] -> assert false | m :: univs -> ([ m ], univs)
-    else ([], univs)
-  in
   let subst l =
     match Level.var_index l with
     | None -> Universe.make l
     | Some n -> List.nth univs n
   in
   let extra = List.map (fun alg -> subst_univs_universe subst alg) inst.algs in
-  let univs = List.concat [ univs; extra; motive ] in
+  let univs = List.concat [ univs; extra ] in
   let uconv, univs =
     CList.fold_left_map (fun state u -> to_univ_level u state) uconv univs
   in
@@ -555,7 +716,7 @@ and declare_def state n { ty; body; univs } i =
     DeclareDef.declare_definition ~scope ~name:(name_for n i) ~kind
       UnivNames.empty_binders entry []
   in
-  let inst = { ref; algs; is_large_elim = false } in
+  let inst = { ref; algs } in
   let declared = add_declared state.declared n i inst in
   ({ state with declared }, inst)
 
@@ -569,7 +730,7 @@ and declare_ax state n { ty; univs } i =
       ~kind:Decls.(IsAssumption Definitional)
       entry
   in
-  let inst = { ref = GlobRef.ConstRef c; algs; is_large_elim = false } in
+  let inst = { ref = GlobRef.ConstRef c; algs } in
   let declared = add_declared state.declared n i inst in
   ({ state with declared }, inst)
 
@@ -577,7 +738,7 @@ and to_params state params =
   CList.fold_left_map
     (fun state (_bk, p, ty) ->
       let state, ty = to_constr ty state in
-      (state, Context.Rel.Declaration.LocalAssum (to_annot p, ty)))
+      (state, RelDecl.LocalAssum (to_annot p, ty)))
     state params
 
 and declare_ind state n { params; ty; ctors; univs } i =
@@ -633,34 +794,75 @@ and declare_ind state n { params; ty; ctors; univs } i =
     || (Global.lookup_mind mind).mind_packets.(0).mind_kelim == InType);
 
   (* add ind and ctors to [declared] *)
-  let inst = { ref = GlobRef.IndRef (mind, 0); algs; is_large_elim = false } in
+  let inst = { ref = GlobRef.IndRef (mind, 0); algs } in
   let declared = add_declared state.declared n i inst in
   let declared =
     CList.fold_left_i
       (fun cnum declared cname ->
         add_declared declared cname i
-          {
-            ref = GlobRef.ConstructRef ((mind, 0), cnum + 1);
-            algs;
-            is_large_elim = false;
-          })
+          { ref = GlobRef.ConstructRef ((mind, 0), cnum + 1); algs })
       0 declared cnames
   in
 
   (* elim *)
-  let elims =
-    if squashy.lean_squashes then [ ("_sind", Sorts.InSProp) ]
-    else [ ("_rect", InType); ("_sind", InSProp) ]
+  let make_scheme fam =
+    let u =
+      if fam = Sorts.InSProp then Level.sprop
+      else if lean_fancy_univs () then
+        let u = DirPath.make [ Id.of_string "motive"; lean_id ] in
+        Level.(make (UGlobal.make u 0))
+      else UnivGen.fresh_level ()
+    in
+    let env = Environ.set_universes (Global.env ()) graph in
+    let env =
+      if fam = InSProp then env
+      else Environ.push_context_set ~strict:false (ContextSet.singleton u) env
+    in
+    let inst, uentry =
+      match univs with
+      | Monomorphic_entry _ -> assert false
+      | Polymorphic_entry (names, uctx) as entry ->
+        let inst, csts = UContext.dest uctx in
+        ( inst,
+          if fam = InSProp then entry
+          else
+            Polymorphic_entry
+              ( Array.append [| Name (Id.of_string "motive") |] names,
+                UContext.make
+                  ( Instance.of_array
+                      (Array.append [| u |] (Instance.to_array inst)),
+                    csts ) ) )
+    in
+    (lean_scheme env ~dep:(not squashy.always_prop) mind inst (Some u), uentry)
   in
   let nrec = N.append n "rec" in
+  let elims =
+    if squashy.lean_squashes then [ ("_indl", Sorts.InSProp) ]
+    else [ ("_recl", InType); ("_indl", InSProp) ]
+  in
   let declared =
     List.fold_left
       (fun declared (suffix, sort) ->
         let id = Id.of_string (Id.to_string ind_name ^ suffix) in
-        Indschemes.do_mutual_induction_scheme
-          [ (CAst.make id, not squashy.always_prop, (mind, 0), sort) ];
-        let elim = Nametab.locate (Libnames.qualid_of_ident id) in
-        let elim = { ref = elim; algs; is_large_elim = sort == InType } in
+        let body, uentry = make_scheme sort in
+        let elim =
+          DeclareDef.declare_definition ~name:id
+            ~scope:(Global ImportDefaultBehavior)
+            ~kind:(IsDefinition Definition) UnivNames.empty_binders
+            (Declare.definition_entry ~opaque:false ~univs:uentry body)
+            []
+          (* TODO implicits? *)
+        in
+        let liftu l =
+          match Level.var_index l with
+          | None -> Universe.make l (* Set *)
+          | Some i -> Universe.make (Level.var (i + 1))
+        in
+        let algs =
+          if sort = InSProp then algs
+          else List.map (subst_univs_universe liftu) algs
+        in
+        let elim = { ref = elim; algs } in
         let j =
           if squashy.lean_squashes then i
           else if sort == InType then 2 * i
@@ -735,7 +937,7 @@ let squashify state n { params; ty; ctors; univs } =
               if squashed then true
               else if Int.Set.mem (nargs - i) forced then false
               else
-                let t = Context.Rel.Declaration.get_type d in
+                let t = RelDecl.get_type d in
                 if not (Vars.noccurn (npars + i) t) then
                   (* recursive argument *)
                   false
@@ -748,6 +950,7 @@ let squashify state n { params; ty; ctors; univs } =
             (squashed, i + 1, Environ.push_rel d envT))
           args ~init:(false, 0, envT)
       in
+      (* TODO translate to use non recursively uniform params (fix extraction)*)
       ( { state with declared = stateT.declared },
         { maybe_prop = true; always_prop; lean_squashes } )
 
@@ -1092,12 +1295,5 @@ Coq takes 690KB ram in just parsing mode
 
 *)
 
-(* TODO: best line 4657 in core.out
-   on an inductive with a contructor which takes multiple arguments, Coq generates a scheme
-   where the function for that constructor has type [recarg1 -> Hind1 -> recarg2 -> Hind2 -> res]
-   but Lean generates [recarg1 -> recarg2 -> Hind1 -> Hind2 -> res]
-
-   I guess we should manually generate schemes (and take advantage to get rid of is_large_elim)
-   that or rewrite recursors like we do for is_large_elim,
-   but this may require eta expansion so let's not
+(* TODO: best line 5447 in core.out "case analysis not allowed at Top.xxx for [or]"
  *)
