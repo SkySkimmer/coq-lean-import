@@ -1266,11 +1266,7 @@ let rec do_input state ch =
 
 let import f =
   lcnt := 1;
-  (* we don't use autodeclared schemes to control if we use dependent elim *)
-  Flags.without_option Indschemes.elim_flag
-    (fun () -> do_input empty_state (open_in f))
-    ();
-  ()
+  do_input empty_state (open_in f)
 
 (* Lean stdlib:
 - 10244 entries (24065 possible instances)
