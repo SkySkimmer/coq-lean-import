@@ -530,6 +530,7 @@ type 'uconv state = {
   exprs : expr RRange.t;
   univs : U.t RRange.t;
   uconv : 'uconv;
+  skips : int;
   entries : entry N.Map.t;
   squash_info : squashy N.Map.t;
   declared : instantiation Int.Map.t N.Map.t;
@@ -976,6 +977,7 @@ let empty_state =
     exprs = RRange.empty;
     univs = RRange.singleton U.Prop;
     uconv = ();
+    skips = 0;
     entries = N.Map.empty;
     squash_info = N.Map.empty;
     declared = N.Map.empty;
@@ -1202,6 +1204,12 @@ let rec is_arity = function
   | Pi (_, _, _, b) -> is_arity b
   | _ -> false
 
+let print_squashes =
+  Goptions.declare_bool_option_and_ref ~depr:false
+    ~name:"lean print squash info"
+    ~key:[ "Lean"; "Print"; "Squash"; "Info" ]
+    ~value:false
+
 let finish state =
   let max_univs, cnt =
     N.Map.fold
@@ -1221,27 +1229,37 @@ let finish state =
       state.entries 0
   in
   let squashes =
-    N.Map.fold
-      (fun n s pp -> Pp.(pp ++ fnl () ++ N.pp n ++ spc () ++ pp_squashy s))
-      state.squash_info
-      Pp.(mt ())
+    if not (print_squashes ()) then Pp.mt ()
+    else
+      N.Map.fold
+        (fun n s pp -> Pp.(pp ++ fnl () ++ N.pp n ++ spc () ++ pp_squashy s))
+        state.squash_info
+        Pp.(mt ())
   in
   Feedback.msg_info
     Pp.(
-      str "Read "
+      fnl () ++ str "Done!" ++ fnl () ++ str "- "
       ++ int (N.Map.cardinal state.entries)
       ++ str " entries (" ++ int cnt
-      ++ str " possible instances). Found "
+      ++ str " possible instances)."
+      ++ fnl () ++ str "- "
       ++ int (RRange.length state.univs)
-      ++ str " universe expressions, "
+      ++ str " universe expressions"
+      ++ fnl () ++ str "- "
       ++ int (RRange.length state.names)
-      ++ str " names and "
+      ++ str " names" ++ fnl () ++ str "- "
       ++ int (RRange.length state.exprs)
-      ++ str " expression nodes." ++ fnl ()
+      ++ str " expression nodes" ++ fnl () ++ str "Skipped " ++ int state.skips
+      ++ fnl ()
       ++ str "Max universe instance length "
       ++ int max_univs ++ str "." ++ fnl () ++ int nonarities
       ++ str " inductives have non syntactically arity types."
       ++ squashes)
+
+let skip_errors =
+  Goptions.declare_bool_option_and_ref ~depr:false ~name:"lean skip errors"
+    ~key:[ "Lean"; "Skip"; "Errors" ]
+    ~value:false
 
 let rec do_input state ch =
   match input_line ch with
@@ -1256,13 +1274,25 @@ let rec do_input state ch =
       do_input state ch
     | exception e ->
       let e = CErrors.push e in
-      close_in ch;
-      finish state;
-      Feedback.msg_info
-        Pp.(
-          str "issue at line " ++ int !lcnt
-          ++ str (": " ^ l)
-          ++ fnl () ++ CErrors.iprint e))
+      if skip_errors () then begin
+        Feedback.msg_info
+          Pp.(
+            str "Skipping: issue at line "
+            ++ int !lcnt
+            ++ str (": " ^ l)
+            ++ fnl () ++ CErrors.iprint e);
+        incr lcnt;
+        do_input { state with skips = state.skips + 1 } ch
+      end
+      else begin
+        close_in ch;
+        finish state;
+        Feedback.msg_info
+          Pp.(
+            str "issue at line " ++ int !lcnt
+            ++ str (": " ^ l)
+            ++ fnl () ++ CErrors.iprint e)
+      end)
 
 let import f =
   lcnt := 1;
