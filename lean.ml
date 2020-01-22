@@ -645,6 +645,8 @@ let to_univ_level' u state =
   let uconv, u = to_univ_level u state.uconv in
   ({ state with uconv }, u)
 
+let std_prec_max = N.raw_append N.anon "std_prec_max"
+
 let rec to_constr =
   let open Constr in
   let ( >>= ) x f state =
@@ -716,6 +718,13 @@ and declare_def state n { ty; body; univs } i =
   let ref =
     DeclareDef.declare_definition ~scope ~name:(name_for n i) ~kind
       UnivNames.empty_binders entry []
+  in
+  let () =
+    if N.equal n std_prec_max then
+      (* HACK needed to pass [std.prec.max.equations._eqn_1 : std.prec.max = 1024]
+         without taking forever *)
+      let c = match ref with ConstRef c -> c | _ -> assert false in
+      Global.set_strategy (ConstKey c) Expand
   in
   let inst = { ref; algs } in
   let declared = add_declared state.declared n i inst in
@@ -1297,9 +1306,5 @@ Coq takes 690KB ram in just parsing mode
 
 *)
 
-(* TODO: best line 10758 in core.out
-   takes very long (quasy loop) comparing prec.max with 1024
-   here 1024 means the bit wise representation of 1024 (so basically 2 * 2 * 2 * ...)
-   and prec.max is defined to be 1024
-   the problem is that Coq unfolds the head of 1024 first...
+(* TODO: best line 11526 in core.out
  *)
