@@ -665,12 +665,6 @@ let to_univ_level' u state =
 
 let std_prec_max = N.raw_append N.anon "std_prec_max"
 
-let upfront_instances =
-  Goptions.declare_bool_option_and_ref ~depr:false
-    ~name:"lean upfront instantiation"
-    ~key:[ "Lean"; "Upfront"; "Instantiation" ]
-    ~value:false
-
 let rec to_constr =
   let open Constr in
   let ( >>= ) x f state =
@@ -730,7 +724,6 @@ and ensure_exists (state : unit state) n i =
     (* TODO can we end up asking for a ctor or eliminator before
        asking for the inductive type? *)
     if i = 0 then CErrors.anomaly Pp.(N.pp n ++ str " was not instantiated!");
-    assert (not (upfront_instances ()));
     (match N.Map.get n state.entries with
     | Def def -> declare_def state n def i
     | Ax ax -> declare_ax state n ax i
@@ -1087,6 +1080,12 @@ let as_univ state s = RRange.get state.univs (int_of_string s)
 let just_parse =
   Goptions.declare_bool_option_and_ref ~depr:false ~name:"lean just parse"
     ~key:[ "Lean"; "Just"; "Parsing" ]
+    ~value:false
+
+let upfront_instances =
+  Goptions.declare_bool_option_and_ref ~depr:false
+    ~name:"lean upfront instantiation"
+    ~key:[ "Lean"; "Upfront"; "Instantiation" ]
     ~value:false
 
 let declare_instances act state univs =
