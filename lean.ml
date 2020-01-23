@@ -662,6 +662,12 @@ let to_univ_level' u state =
 
 let std_prec_max = N.raw_append N.anon "std_prec_max"
 
+let upfront_instances =
+  Goptions.declare_bool_option_and_ref ~depr:false
+    ~name:"lean upfront instantiation"
+    ~key:[ "Lean"; "Upfront"; "Instantiation" ]
+    ~value:false
+
 let rec to_constr =
   let open Constr in
   let ( >>= ) x f state =
@@ -717,6 +723,7 @@ and ensure_exists (state : unit state) n i =
     (* TODO can we end up asking for a ctor or eliminator before
        asking for the inductive type? *)
     if i = 0 then CErrors.anomaly Pp.(N.pp n ++ str " was not instantiated!");
+    assert (not (upfront_instances ()));
     (match N.Map.get n state.entries with
     | Def def -> declare_def state n def i
     | Ax ax -> declare_ax state n ax i
@@ -1075,6 +1082,32 @@ let just_parse =
     ~key:[ "Lean"; "Just"; "Parsing" ]
     ~value:false
 
+let declare_instances act state univs =
+  let stop = if upfront_instances () then 1 lsl List.length univs else 1 in
+  let rec loop state i =
+    if i = stop then state
+    else
+      let state = act state i in
+      loop state (i + 1)
+  in
+  loop state 0
+
+let declare_def state name def =
+  declare_instances
+    (fun state i -> fst (declare_def state name def i))
+    state def.univs
+
+let declare_ax state name ax =
+  declare_instances
+    (fun state i -> fst (declare_ax state name ax i))
+    state ax.univs
+
+let declare_ind state name ind =
+  let state = squashify state name ind in
+  declare_instances
+    (fun state i -> fst (declare_ind state name ind i))
+    state ind.univs
+
 let do_line state l =
   (* Lean printing strangeness: sometimes we get double spaces (typically with INFIX) *)
   match
@@ -1087,18 +1120,14 @@ let do_line state l =
     and body = get_expr state body
     and univs = List.map (get_name state) univs in
     let def = { ty; body; univs } in
-    let state =
-      if just_parse () then state else fst (declare_def state name def 0)
-    in
+    let state = if just_parse () then state else declare_def state name def in
     add_entry state name (Def def)
   | "#AX" :: name :: ty :: univs ->
     let name = get_name state name
     and ty = get_expr state ty
     and univs = List.map (get_name state) univs in
     let ax = { ty; univs } in
-    let state =
-      if just_parse () then state else fst (declare_ax state name ax 0)
-    in
+    let state = if just_parse () then state else declare_ax state name ax in
     add_entry state name (Ax ax)
   | "#IND" :: nparams :: name :: ty :: nctors :: rest ->
     let nparams = int_of_string nparams
@@ -1112,12 +1141,7 @@ let do_line state l =
     in
     let univs = List.map (get_name state) univs in
     let ind = { params; ty; ctors; univs } in
-    let state =
-      if just_parse () then state
-      else
-        let state = squashify state name ind in
-        fst (declare_ind state name ind 0)
-    in
+    let state = if just_parse () then state else declare_ind state name ind in
     add_entry state name (Ind ind)
   | [ "#QUOT" ] -> if just_parse () then state else declare_quot state
   | (("#PREFIX" | "#INFIX" | "#POSTFIX") as kind) :: rest ->
