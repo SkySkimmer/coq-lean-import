@@ -750,16 +750,18 @@ and declare_ax state n { ty; univs } i =
   ({ state with declared }, inst)
 
 and to_params state params =
-  CList.fold_left_map
-    (fun state (_bk, p, ty) ->
-      let state, ty = to_constr ty state in
-      (state, RelDecl.LocalAssum (to_annot p, ty)))
-    state params
+  let state, params =
+    CList.fold_left_map
+      (fun state (_bk, p, ty) ->
+        let state, ty = to_constr ty state in
+        (state, RelDecl.LocalAssum (to_annot p, ty)))
+      state params
+  in
+  (state, List.rev params)
 
 and declare_ind state n { params; ty; ctors; univs } i =
   let state = start_uconv state univs i in
   let state, params = to_params state params in
-  let params = List.rev params in
   let state, ty = to_constr ty state in
   let state, ctors =
     CList.fold_left_map
@@ -1335,6 +1337,6 @@ Coq takes 690KB ram in just parsing mode
 
 *)
 
-(* TODO: best line 20728 in stdlib
-   anomaly not a sort
+(* TODO: best line 20769 in stdlib
+   assert failed univ.ml L1003
  *)
