@@ -1336,6 +1336,6 @@ Coq takes 690KB ram in just parsing mode
 
 *)
 
-(* TODO: best line 11526 in core.out
-   defining eq_of_heq, which needs special reduction
+(* TODO: best line 20728 in stdlib
+   anomaly not a sort
  *)
