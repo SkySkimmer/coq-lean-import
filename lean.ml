@@ -690,7 +690,7 @@ let rec to_constr =
   | Let { name; ty; v; rest } ->
     to_constr ty >>= fun ty ->
     to_constr v >>= fun v ->
-    to_constr rest >>= fun rest -> ret (mkLetIn (to_annot name, ty, v, rest))
+    to_constr rest >>= fun rest -> ret (mkLetIn (to_annot name, v, ty, rest))
   | Lam (_bk, n, a, b) ->
     to_constr a >>= fun a ->
     to_constr b >>= fun b -> ret (mkLambda (to_annot n, a, b))
@@ -1381,6 +1381,6 @@ Coq takes 690KB ram in just parsing mode
 (* TODO: best line 23000 in stdlib
    stack overflow
 
-   with upfront instances: 23263 in stdlib
-   term ... has type "fin n" but expected a sort
+   with upfront instances: 39860 in stdlib
+   missing quot
  *)
