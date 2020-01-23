@@ -523,7 +523,11 @@ let coq_squashes graph (entry : Entries.mutual_inductive_entry) =
   let _, s = Reduction.dest_arity env_params ty in
   (* TODO merge with uip branch *)
   if not (Sorts.is_sprop s) then false
-  else match ind.mind_entry_lc with [] -> false | _ :: _ -> true
+  else
+    match ind.mind_entry_lc with
+    | [] -> false
+    | _ :: _ :: _ -> true
+    | [ c ] -> (match Constr.kind c with Rel _ | App _ -> false | _ -> true)
 
 type 'uconv state = {
   names : N.t RRange.t;
