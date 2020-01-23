@@ -304,8 +304,7 @@ let rec do_n f x n = if n = 0 then x else do_n f (f x) (n - 1)
    to simulate this, each named level becomes > Set and we compute maxes accordingly
 *)
 
-let to_universe map u =
-  let u = to_universe map u in
+let simplify_universe u =
   match Universe.repr u with
   | (l, n) :: (_ :: _ as rest) when Level.is_set l ->
     if List.exists (fun (_, n') -> n <= n' + 1) rest then
@@ -315,6 +314,10 @@ let to_universe map u =
         Universe.sprop rest
     else u
   | _ -> u
+
+let to_universe map u =
+  let u = to_universe map u in
+  simplify_universe u
 
 type uconv = {
   map : Level.t N.Map.t;  (** Map from lean names to Coq universes *)
@@ -709,7 +712,11 @@ and instantiate n univs state =
     | None -> Universe.make l
     | Some n -> List.nth univs n
   in
-  let extra = List.map (fun alg -> subst_univs_universe subst alg) inst.algs in
+  let extra =
+    List.map
+      (fun alg -> simplify_universe (subst_univs_universe subst alg))
+      inst.algs
+  in
   let univs = List.concat [ univs; extra ] in
   let uconv, univs =
     CList.fold_left_map (fun state u -> to_univ_level u state) uconv univs
@@ -1373,4 +1380,7 @@ Coq takes 690KB ram in just parsing mode
 
 (* TODO: best line 23000 in stdlib
    stack overflow
+
+   with upfront instances: 23263 in stdlib
+   term ... has type "fin n" but expected a sort
  *)
