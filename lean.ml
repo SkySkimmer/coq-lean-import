@@ -1115,30 +1115,36 @@ let declare_ind state name ind =
     (fun state i -> fst (declare_ind state name ind i))
     state ind.univs
 
+let cur_name = ref N.anon
+
 let do_line state l =
+  cur_name := N.anon;
   (* Lean printing strangeness: sometimes we get double spaces (typically with INFIX) *)
   match
     List.filter (fun s -> s <> "") (String.split_on_char ' ' (String.trim l))
   with
   | [] -> state (* empty line *)
   | "#DEF" :: name :: ty :: body :: univs ->
-    let name = get_name state name
-    and ty = get_expr state ty
+    let name = get_name state name in
+    cur_name := name;
+    let ty = get_expr state ty
     and body = get_expr state body
     and univs = List.map (get_name state) univs in
     let def = { ty; body; univs } in
     let state = if just_parse () then state else declare_def state name def in
     add_entry state name (Def def)
   | "#AX" :: name :: ty :: univs ->
-    let name = get_name state name
-    and ty = get_expr state ty
+    let name = get_name state name in
+    cur_name := name;
+    let ty = get_expr state ty
     and univs = List.map (get_name state) univs in
     let ax = { ty; univs } in
     let state = if just_parse () then state else declare_ax state name ax in
     add_entry state name (Ax ax)
   | "#IND" :: nparams :: name :: ty :: nctors :: rest ->
+    let name = get_name state name in
+    cur_name := name;
     let nparams = int_of_string nparams
-    and name = get_name state name
     and ty = get_expr state ty
     and nctors = int_of_string nctors in
     let params, ty = pop_params nparams ty in
@@ -1326,7 +1332,8 @@ let rec do_input state ch =
             str "Skipping: issue at line "
             ++ int !lcnt
             ++ str (": " ^ l)
-            ++ fnl () ++ CErrors.iprint e);
+            ++ str " (current entry " ++ N.pp !cur_name ++ str ")" ++ fnl ()
+            ++ CErrors.iprint e);
         incr lcnt;
         do_input { state with skips = state.skips + 1 } ch
       end
@@ -1337,6 +1344,7 @@ let rec do_input state ch =
           Pp.(
             str "issue at line " ++ int !lcnt
             ++ str (": " ^ l)
+            ++ str " (current entry " ++ N.pp !cur_name ++ str ")" ++ fnl ()
             ++ fnl () ++ CErrors.iprint e)
       end)
 
@@ -1383,4 +1391,6 @@ Coq takes 690KB ram in just parsing mode
 
    with upfront instances: 39860 in stdlib
    missing quot
+
+   current skip (including at will interrupts): 815 in stdlib
  *)
