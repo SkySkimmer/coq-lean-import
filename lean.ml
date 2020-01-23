@@ -635,8 +635,18 @@ let finish_uconv state ounivs =
   let univs = univ_entry state.uconv ounivs in
   ({ state with uconv = () }, univs)
 
+(* NB collisions for constructors/recursors are still possible but
+   should be rare *)
 let name_for n i =
-  if i = 0 then N.to_id n else Id.of_string (N.to_string n ^ string_of_int i)
+  let base =
+    if i = 0 then N.to_id n
+    else Id.of_string (N.to_string n ^ "_inst" ^ string_of_int i)
+  in
+  if not (Global.exists_objlabel (Label.of_id base)) then base
+  else
+    (* prevent resetting the number *)
+    let base = if i = 0 then base else Id.of_string (Id.to_string base ^ "_") in
+    Namegen.next_global_ident_away base Id.Set.empty
 
 let add_declared declared n i inst =
   N.Map.update n
@@ -1337,7 +1347,6 @@ Coq takes 690KB ram in just parsing mode
 
 *)
 
-(* TODO: best line 22939 in stdlib
-   lt_trans already exists
-   indeed in init/algebra/order.lean: [def lt.trans := @lt_trans]
+(* TODO: best line 23000 in stdlib
+   stack overflow
  *)
