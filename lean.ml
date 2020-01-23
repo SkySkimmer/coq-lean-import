@@ -955,7 +955,7 @@ let squashify state n { params; ty; ctors; univs } =
               else if Int.Set.mem (nargs - i) forced then false
               else
                 let t = RelDecl.get_type d in
-                if not (Vars.noccurn (npars + i) t) then
+                if not (Vars.noccurn (npars + i + 1) t) then
                   (* recursive argument *)
                   false
                 else
@@ -1337,6 +1337,7 @@ Coq takes 690KB ram in just parsing mode
 
 *)
 
-(* TODO: best line 20769 in stdlib
-   assert failed univ.ml L1003
+(* TODO: best line 22939 in stdlib
+   lt_trans already exists
+   indeed in init/algebra/order.lean: [def lt.trans := @lt_trans]
  *)
