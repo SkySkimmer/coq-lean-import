@@ -1271,7 +1271,6 @@ let rec do_input state ch =
     close_in ch;
     finish state
   | l ->
-    let () = if !lcnt = 10758 then Feedback.msg_info Pp.(str "ehe") in
     (match do_line state l with
     | state ->
       incr lcnt;
