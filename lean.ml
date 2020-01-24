@@ -434,7 +434,7 @@ type ind = {
   univs : N.t list;
 }
 
-type entry = Def of def | Ax of ax | Ind of ind
+type entry = Def of def | Ax of ax | Ind of ind | Quot
 
 type notation_kind = Prefix | Infix | Postfix
 
@@ -744,7 +744,8 @@ and ensure_exists (state : unit state) n i =
     (match N.Map.get n state.entries with
     | Def def -> declare_def state n def i
     | Ax ax -> declare_ax state n ax i
-    | Ind ind -> declare_ind state n ind i)
+    | Ind ind -> declare_ind state n ind i
+    | Quot -> CErrors.anomaly Pp.(str "quot must be predeclared"))
 
 and declare_def state n { ty; body; univs } i =
   let state = start_uconv state univs i in
@@ -1027,7 +1028,61 @@ let squashify state n ind =
   let state, s = squashify state n ind in
   { state with squash_info = N.Map.add n s state.squash_info }
 
-let declare_quot state = state (* TODO *)
+let quot_name = N.append N.anon "quot"
+
+let quot_modname = Id.of_string "Quot"
+
+(* pairs of (name * number of univs) *)
+let quots = [ ("", 1); ("mk", 1); ("lift", 2); ("ind", 1) ]
+
+let declare_quot state =
+  let declared =
+    List.fold_left
+      (fun declared (n, nunivs) ->
+        let rec loop declared i =
+          if i = 1 lsl nunivs then declared
+          else
+            let lean =
+              if CString.is_empty n then quot_name else N.append quot_name n
+            in
+            let id =
+              if CString.is_empty n then name_for_core quot_name i
+              else name_for_core (N.append N.anon n) i
+            in
+            let qualid =
+              Libnames.make_qualid (DirPath.make [ quot_modname ]) id
+            in
+            let ref =
+              try Nametab.locate qualid
+              with Not_found ->
+                CErrors.user_err Pp.(str "missing Quot." ++ Id.print id)
+            in
+            let declared = add_declared declared lean i { ref; algs = [] } in
+            loop declared (i + 1)
+        in
+        loop declared 0)
+      state.declared quots
+  in
+  Feedback.msg_info Pp.(str "quot registered");
+  { state with declared }
+
+let skip_missing_quot =
+  Goptions.declare_bool_option_and_ref ~depr:false
+    ~name:"lean skip missing quotient"
+    ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
+    ~value:true
+
+let declare_quot state =
+  match
+    Nametab.locate
+      (Libnames.make_qualid (DirPath.make [ quot_modname ]) (N.to_id quot_name))
+  with
+  | _ -> declare_quot state
+  | exception Not_found ->
+    if skip_missing_quot () then (
+      Feedback.msg_info Pp.(str "Skipping: missing quotient");
+      state)
+    else CErrors.user_err Pp.(str "missing quotient")
 
 let empty_state =
   {
@@ -1189,7 +1244,9 @@ let do_line state l =
     let ind = { params; ty; ctors; univs } in
     let state = if just_parse () then state else declare_ind state name ind in
     add_entry state name (Ind ind)
-  | [ "#QUOT" ] -> if just_parse () then state else declare_quot state
+  | [ "#QUOT" ] ->
+    let state = if just_parse () then state else declare_quot state in
+    add_entry state quot_name Quot
   | (("#PREFIX" | "#INFIX" | "#POSTFIX") as kind) :: rest ->
     (match rest with
     | [ n; level; token ] ->
@@ -1302,14 +1359,15 @@ let finish state =
         match entry with
         | Ax { univs } | Def { univs } | Ind { univs } ->
           let l = List.length univs in
-          (max m l, cnt + (1 lsl l)))
+          (max m l, cnt + (1 lsl l))
+        | Quot -> (max m 1, cnt + 2))
       state.entries (0, 0)
   in
   let nonarities =
     N.Map.fold
       (fun _ entry cnt ->
         match entry with
-        | Ax _ | Def _ -> cnt
+        | Ax _ | Def _ | Quot -> cnt
         | Ind ind -> if is_arity ind.ty then cnt else cnt + 1)
       state.entries 0
   in
@@ -1325,8 +1383,10 @@ let finish state =
     Pp.(
       fnl () ++ str "Done!" ++ fnl () ++ str "- "
       ++ int (N.Map.cardinal state.entries)
-      ++ str " entries (" ++ int cnt
-      ++ str " possible instances)."
+      ++ str " entries (" ++ int cnt ++ str " possible instances)"
+      ++ (if N.Map.exists (fun _ x -> Quot == x) state.entries then
+          str " (including quot)."
+         else str ".")
       ++ fnl () ++ str "- "
       ++ int (RRange.length state.univs)
       ++ str " universe expressions"
