@@ -1518,4 +1518,7 @@ Coq takes 690KB ram in just parsing mode
    with upfront instances: 97664 in stdlib (div_lt_div_of_mul_sub_mul_div_neg)
    takes too long
 
+   first line that takes a while is L36382 mul_le_mul_of_nonpos_right (20s, 2 instantiations)
+   from ordered_ring.lean
+
  *)
