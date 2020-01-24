@@ -644,18 +644,29 @@ let finish_uconv state ounivs =
   let univs = univ_entry state.uconv ounivs in
   ({ state with uconv = () }, univs)
 
+let name_for_core n i =
+  if i = 0 then N.to_id n
+  else Id.of_string (N.to_string n ^ "_inst" ^ string_of_int i)
+
 (* NB collisions for constructors/recursors are still possible but
    should be rare *)
 let name_for n i =
-  let base =
-    if i = 0 then N.to_id n
-    else Id.of_string (N.to_string n ^ "_inst" ^ string_of_int i)
-  in
+  let base = name_for_core n i in
   if not (Global.exists_objlabel (Label.of_id base)) then base
   else
     (* prevent resetting the number *)
     let base = if i = 0 then base else Id.of_string (Id.to_string base ^ "_") in
     Namegen.next_global_ident_away base Id.Set.empty
+
+let get_predeclared_eq n i =
+  if String.equal (N.to_string n) "eq" then
+    let ind_name = name_for_core n i in
+    match Nametab.locate (Libnames.qualid_of_ident ind_name) with
+    | IndRef (ind, 0) as ref ->
+      if Global.is_polymorphic ref then Some (ind_name, ind) else None
+    | _ -> None
+    | exception Not_found -> None
+  else None
 
 let add_declared declared n i inst =
   N.Map.update n
@@ -778,55 +789,80 @@ and to_params state params =
   (state, List.rev params)
 
 and declare_ind state n { params; ty; ctors; univs } i =
-  let state = start_uconv state univs i in
-  let state, params = to_params state params in
-  let state, ty = to_constr ty state in
-  let state, ctors =
-    CList.fold_left_map
-      (fun state (n, ty) ->
-        let state, ty = to_constr ty state in
-        (state, (n, ty)))
-      state ctors
+  let state, mind, algs, ind_name, cnames, univs, squashy =
+    match get_predeclared_eq n i with
+    | Some (ind_name, mind) ->
+      (* Hack to let the user predeclare eq and quot before running Lean Import
+         TODO make a more general Register-like API? *)
+      Feedback.msg_info Pp.(Id.print ind_name ++ str " is predeclared");
+      let cname = N.append n "refl" in
+      let squashy =
+        { maybe_prop = true; always_prop = true; lean_squashes = false }
+      in
+      let univs =
+        match i with
+        | 0 ->
+          Entries.Polymorphic_entry
+            ( [| Name (Id.of_string "u") |],
+              UContext.make
+                ( Instance.of_array [| univ_of_name (N.append N.anon "u") |],
+                  Constraint.empty ) )
+        | 1 -> Entries.Polymorphic_entry ([||], UContext.empty)
+        | _ -> assert false
+      in
+      (state, mind, [], ind_name, [ cname ], univs, squashy)
+    | None ->
+      let state = start_uconv state univs i in
+      let state, params = to_params state params in
+      let state, ty = to_constr ty state in
+      let state, ctors =
+        CList.fold_left_map
+          (fun state (n, ty) ->
+            let state, ty = to_constr ty state in
+            (state, (n, ty)))
+          state ctors
+      in
+      let cnames, ctys = List.split ctors in
+      let graph = state.uconv.graph in
+      let state, (univs, algs) = finish_uconv state univs in
+      let ind_name = name_for n i in
+      let entry =
+        {
+          Entries.mind_entry_params = params;
+          mind_entry_record = None;
+          mind_entry_finite = Finite;
+          mind_entry_inds =
+            [
+              {
+                mind_entry_typename = ind_name;
+                mind_entry_arity = ty;
+                mind_entry_template = false;
+                mind_entry_consnames = List.map (fun n -> name_for n i) cnames;
+                mind_entry_lc = ctys;
+              };
+            ];
+          mind_entry_private = None;
+          mind_entry_universes = univs;
+          mind_entry_cumulative = false;
+        }
+      in
+      let squashy = N.Map.get n state.squash_info in
+      let coq_squashes =
+        if squashy.maybe_prop then coq_squashes graph entry else false
+      in
+      let mind =
+        let act () =
+          DeclareInd.declare_mutual_inductive_with_eliminations entry
+            UnivNames.empty_binders []
+        in
+        if squashy.lean_squashes || not coq_squashes then act ()
+        else with_unsafe_univs act ()
+      in
+      assert (
+        squashy.lean_squashes
+        || (Global.lookup_mind mind).mind_packets.(0).mind_kelim == InType);
+      (state, mind, algs, ind_name, cnames, univs, squashy)
   in
-  let cnames, ctys = List.split ctors in
-  let graph = state.uconv.graph in
-  let state, (univs, algs) = finish_uconv state univs in
-  let ind_name = name_for n i in
-  let entry =
-    {
-      Entries.mind_entry_params = params;
-      mind_entry_record = None;
-      mind_entry_finite = Finite;
-      mind_entry_inds =
-        [
-          {
-            mind_entry_typename = ind_name;
-            mind_entry_arity = ty;
-            mind_entry_template = false;
-            mind_entry_consnames = List.map (fun n -> name_for n i) cnames;
-            mind_entry_lc = ctys;
-          };
-        ];
-      mind_entry_private = None;
-      mind_entry_universes = univs;
-      mind_entry_cumulative = false;
-    }
-  in
-  let squashy = N.Map.get n state.squash_info in
-  let coq_squashes =
-    if squashy.maybe_prop then coq_squashes graph entry else false
-  in
-  let mind =
-    let act () =
-      DeclareInd.declare_mutual_inductive_with_eliminations entry
-        UnivNames.empty_binders []
-    in
-    if squashy.lean_squashes || not coq_squashes then act ()
-    else with_unsafe_univs act ()
-  in
-  assert (
-    squashy.lean_squashes
-    || (Global.lookup_mind mind).mind_packets.(0).mind_kelim == InType);
 
   (* add ind and ctors to [declared] *)
   let inst = { ref = GlobRef.IndRef (mind, 0); algs } in
@@ -841,22 +877,22 @@ and declare_ind state n { params; ty; ctors; univs } i =
 
   (* elim *)
   let make_scheme fam =
-    let u =
-      if fam = Sorts.InSProp then Level.sprop
-      else if lean_fancy_univs () then
-        let u = DirPath.make [ Id.of_string "motive"; lean_id ] in
-        Level.(make (UGlobal.make u 0))
-      else UnivGen.fresh_level ()
-    in
-    let env = Environ.set_universes (Global.env ()) graph in
-    let env =
-      if fam = InSProp then env
-      else Environ.push_context_set ~strict:false (ContextSet.singleton u) env
-    in
-    let inst, uentry =
-      match univs with
-      | Monomorphic_entry _ -> assert false
-      | Polymorphic_entry (names, uctx) as entry ->
+    match univs with
+    | Monomorphic_entry _ -> assert false
+    | Polymorphic_entry (names, uctx) as entry ->
+      let u =
+        if fam = Sorts.InSProp then Level.sprop
+        else if lean_fancy_univs () then
+          let u = DirPath.make [ Id.of_string "motive"; lean_id ] in
+          Level.(make (UGlobal.make u 0))
+        else UnivGen.fresh_level ()
+      in
+      let env = Environ.push_context ~strict:true uctx (Global.env ()) in
+      let env =
+        if fam = InSProp then env
+        else Environ.push_context_set ~strict:false (ContextSet.singleton u) env
+      in
+      let inst, uentry =
         let inst, csts = UContext.dest uctx in
         ( inst,
           if fam = InSProp then entry
@@ -867,8 +903,8 @@ and declare_ind state n { params; ty; ctors; univs } i =
                   ( Instance.of_array
                       (Array.append [| u |] (Instance.to_array inst)),
                     csts ) ) )
-    in
-    (lean_scheme env ~dep:(not squashy.always_prop) mind inst u, uentry)
+      in
+      (lean_scheme env ~dep:(not squashy.always_prop) mind inst u, uentry)
   in
   let nrec = N.append n "rec" in
   let elims =
