@@ -16,6 +16,12 @@ let __ () = assert false
 
 let invalid = Constr.(mkApp (mkSet, [| mkSet |]))
 
+let quickdef ~name entry impls =
+  let scope = DeclareDef.Global Declare.ImportDefaultBehavior in
+  let kind = Decls.(IsDefinition Definition) in
+  DeclareDef.declare_definition ~scope ~name ~kind UnivNames.empty_binders entry
+    impls
+
 (** produce [args, recargs] inside mixed context [args/recargs]
     [info] is in reverse order, ie the head is about the last arg in application order
 
@@ -734,13 +740,8 @@ and declare_def state n { ty; body; univs } i =
   let state, ty = to_constr ty state in
   let state, body = to_constr body state in
   let state, (univs, algs) = finish_uconv state univs in
-  let kind = Decls.(IsDefinition Definition) in
   let entry = Declare.definition_entry ~opaque:false ~types:ty ~univs body in
-  let scope = DeclareDef.Global Declare.ImportDefaultBehavior in
-  let ref =
-    DeclareDef.declare_definition ~scope ~name:(name_for n i) ~kind
-      UnivNames.empty_binders entry []
-  in
+  let ref = quickdef ~name:(name_for n i) entry [] in
   let () =
     if N.equal n std_prec_max then
       (* HACK needed to pass [std.prec.max.equations._eqn_1 : std.prec.max = 1024]
@@ -880,9 +881,7 @@ and declare_ind state n { params; ty; ctors; univs } i =
         let id = Id.of_string (Id.to_string ind_name ^ suffix) in
         let body, uentry = make_scheme sort in
         let elim =
-          DeclareDef.declare_definition ~name:id
-            ~scope:(Global ImportDefaultBehavior)
-            ~kind:(IsDefinition Definition) UnivNames.empty_binders
+          quickdef ~name:id
             (Declare.definition_entry ~opaque:false ~univs:uentry body)
             []
           (* TODO implicits? *)
