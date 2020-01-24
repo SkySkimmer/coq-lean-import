@@ -1077,11 +1077,11 @@ let declare_quot state =
     Nametab.locate
       (Libnames.make_qualid (DirPath.make [ quot_modname ]) (N.to_id quot_name))
   with
-  | _ -> declare_quot state
+  | _ -> (declare_quot state, true)
   | exception Not_found ->
     if skip_missing_quot () then (
       Feedback.msg_info Pp.(str "Skipping: missing quotient");
-      state)
+      (state, false))
     else CErrors.user_err Pp.(str "missing quotient")
 
 let empty_state =
@@ -1245,8 +1245,11 @@ let do_line state l =
     let state = if just_parse () then state else declare_ind state name ind in
     add_entry state name (Ind ind)
   | [ "#QUOT" ] ->
-    let state = if just_parse () then state else declare_quot state in
-    add_entry state quot_name Quot
+    let state, ok =
+      if just_parse () then (state, true) else declare_quot state
+    in
+    if ok then add_entry state quot_name Quot
+    else { state with skips = state.skips + 1 }
   | (("#PREFIX" | "#INFIX" | "#POSTFIX") as kind) :: rest ->
     (match rest with
     | [ n; level; token ] ->
@@ -1480,6 +1483,8 @@ Coq takes 690KB ram in just parsing mode
 
 (* TODO: best line 23000 in stdlib
    stack overflow
+
+   in logic, line 18603 (or_left_comm)
 
    with upfront instances: 39860 in stdlib
    missing quot
