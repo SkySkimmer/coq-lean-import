@@ -1494,8 +1494,7 @@ Coq takes 690KB ram in just parsing mode
 (* TODO: best line 23000 in stdlib
    stack overflow
 
-   with upfront instances: 39860 in stdlib
-   missing quot
+   with upfront instances: 97664 in stdlib (div_lt_div_of_mul_sub_mul_div_neg)
+   takes too long
 
-   current skip (including at will interrupts): 815 in stdlib
  *)
