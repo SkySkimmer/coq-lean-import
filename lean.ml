@@ -228,9 +228,11 @@ end = struct
 end
 
 module LeanName : sig
-  type t = private string
+  type t = private string list
 
   val anon : t
+
+  val of_list : string list -> t
 
   val append : t -> string -> t
 
@@ -251,27 +253,35 @@ module LeanName : sig
 
   module Map : CMap.ExtS with type key = t and module Set := Set
 end = struct
-  type t = string
+  type t = string list
   (** "foo.bar.baz" is [baz;bar;foo] (like with dirpaths) *)
 
-  let anon : t = ""
+  let anon : t = []
 
-  let append a b = if a = "" then b else a ^ "_" ^ b
+  let of_list x = x
 
-  let raw_append a b = a ^ b
+  let append a b = if a = [] then [ b ] else b :: a
 
-  let to_id (x : t) = Id.of_string x
+  let raw_append a b = match a with [] -> [ b ] | hd :: tl -> (hd ^ b) :: tl
 
-  let to_name x = if x = "" then Anonymous else Name (to_id x)
+  let to_id (x : t) = Id.of_string (String.concat "_" (List.rev x))
 
-  let to_string x = x
+  let to_name x = if x = [] then Anonymous else Name (to_id x)
 
-  let pp = Pp.str
+  let to_string x = String.concat "_" (List.rev x)
 
-  let equal = String.equal
+  let pp x = Pp.(prlist_with_sep (fun () -> str ".") str) (List.rev x)
 
-  module Set = CString.Set
-  module Map = CString.Map
+  let equal = CList.equal String.equal
+
+  module Self = struct
+    type nonrec t = t
+
+    let compare = CList.compare String.compare
+  end
+
+  module Set = Set.Make (Self)
+  module Map = CMap.Make (Self)
 end
 
 module N = LeanName
@@ -680,7 +690,7 @@ let to_univ_level' u state =
   let uconv, u = to_univ_level u state.uconv in
   ({ state with uconv }, u)
 
-let std_prec_max = N.raw_append N.anon "std_prec_max"
+let std_prec_max = N.of_list [ "max"; "prec"; "std" ]
 
 let rec to_constr =
   let open Constr in
@@ -1483,8 +1493,6 @@ Coq takes 690KB ram in just parsing mode
 
 (* TODO: best line 23000 in stdlib
    stack overflow
-
-   in logic, line 18603 (or_left_comm)
 
    with upfront instances: 39860 in stdlib
    missing quot
