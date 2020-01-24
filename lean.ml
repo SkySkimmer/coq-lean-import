@@ -330,7 +330,7 @@ type uconv = {
 let lean_id = Id.of_string "Lean"
 
 let lean_fancy_univs =
-  Goptions.declare_bool_option_and_ref ~depr:false ~name:"lean fancy univs"
+  Goptions.declare_bool_option_and_ref ~depr:false
     ~key:[ "Lean"; "Fancy"; "Universes" ]
     ~value:true
 
@@ -1078,13 +1078,12 @@ let add_entry state n entry =
 let as_univ state s = RRange.get state.univs (int_of_string s)
 
 let just_parse =
-  Goptions.declare_bool_option_and_ref ~depr:false ~name:"lean just parse"
+  Goptions.declare_bool_option_and_ref ~depr:false
     ~key:[ "Lean"; "Just"; "Parsing" ]
     ~value:false
 
 let upfront_instances =
   Goptions.declare_bool_option_and_ref ~depr:false
-    ~name:"lean upfront instantiation"
     ~key:[ "Lean"; "Upfront"; "Instantiation" ]
     ~value:false
 
@@ -1258,7 +1257,6 @@ let rec is_arity = function
 
 let print_squashes =
   Goptions.declare_bool_option_and_ref ~depr:false
-    ~name:"lean print squash info"
     ~key:[ "Lean"; "Print"; "Squash"; "Info" ]
     ~value:false
 
@@ -1309,7 +1307,7 @@ let finish state =
       ++ squashes)
 
 let skip_errors =
-  Goptions.declare_bool_option_and_ref ~depr:false ~name:"lean skip errors"
+  Goptions.declare_bool_option_and_ref ~depr:false
     ~key:[ "Lean"; "Skip"; "Errors" ]
     ~value:false
 
