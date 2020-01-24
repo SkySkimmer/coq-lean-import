@@ -1419,6 +1419,27 @@ let skip_errors =
     ~key:[ "Lean"; "Skip"; "Errors" ]
     ~value:false
 
+let prtime t0 t1 =
+  let diff = System.time_difference t0 t1 in
+  if diff > 1.0 then
+    Feedback.msg_info
+      Pp.(
+        str "line " ++ int !lcnt ++ str " took "
+        ++ System.fmt_time_difference t0 t1)
+
+let do_line state l =
+  let t0 = System.get_time () in
+  match do_line state l with
+  | state ->
+    let t1 = System.get_time () in
+    prtime t0 t1;
+    state
+  | exception e ->
+    let e = CErrors.push e in
+    let t1 = System.get_time () in
+    prtime t0 t1;
+    Exninfo.iraise e
+
 let rec do_input state ch =
   match input_line ch with
   | exception End_of_file ->
