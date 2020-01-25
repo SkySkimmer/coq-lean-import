@@ -692,6 +692,16 @@ let to_univ_level' u state =
 
 let std_prec_max = N.of_list [ "max"; "prec"; "std" ]
 
+(* with this off: best line 23000 in stdlib
+   stack overflow
+
+   update: got fixed by e9e637de26 (distinguish names foo.bar and foo_bar)
+*)
+let upfront_instances =
+  Goptions.declare_bool_option_and_ref ~depr:false
+    ~key:[ "Lean"; "Upfront"; "Instantiation" ]
+    ~value:false
+
 let rec to_constr =
   let open Constr in
   let ( >>= ) x f state =
@@ -751,6 +761,7 @@ and ensure_exists (state : unit state) n i =
     (* TODO can we end up asking for a ctor or eliminator before
        asking for the inductive type? *)
     if i = 0 then CErrors.anomaly Pp.(N.pp n ++ str " was not instantiated!");
+    assert (not (upfront_instances ()));
     (match N.Map.get n state.entries with
     | Def def -> declare_def state n def i
     | Ax ax -> declare_ax state n ax i
@@ -1182,11 +1193,6 @@ let just_parse =
     ~key:[ "Lean"; "Just"; "Parsing" ]
     ~value:false
 
-let upfront_instances =
-  Goptions.declare_bool_option_and_ref ~depr:false
-    ~key:[ "Lean"; "Upfront"; "Instantiation" ]
-    ~value:false
-
 let declare_instances act state univs =
   let stop = if upfront_instances () then 1 lsl List.length univs else 1 in
   let rec loop state i =
@@ -1512,10 +1518,7 @@ Coq takes 690KB ram in just parsing mode
 
 *)
 
-(* TODO: best line 23000 in stdlib
-   stack overflow
-
-   with upfront instances: 97664 in stdlib (div_lt_div_of_mul_sub_mul_div_neg)
+(* TODO: L97664 in stdlib (div_lt_div_of_mul_sub_mul_div_neg)
    takes too long
    two_pos also takes forever, it's ridiculous
 
