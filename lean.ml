@@ -1446,6 +1446,25 @@ let do_line state l =
     prtime t0 t1;
     Exninfo.iraise e
 
+let timeout = ref None
+
+let () =
+  Goptions.declare_int_option
+    {
+      optdepr = false;
+      optname = "lean per line timeout";
+      optkey = [ "Lean"; "Line"; "Timeout" ];
+      optread = (fun () -> !timeout);
+      optwrite = (fun x -> timeout := x);
+    }
+
+exception TimedOut
+
+let do_line state l =
+  match !timeout with
+  | None -> do_line state l
+  | Some t -> Control.timeout t (fun () -> do_line state l) () TimedOut
+
 let rec do_input state ch =
   match input_line ch with
   | exception End_of_file ->
@@ -1521,6 +1540,11 @@ Coq takes 690KB ram in just parsing mode
 
 unset conv check: takes lots of ram after filter_mem_inf_sets_of_right
 (killed at around 4GB)
+
+with per line timeout 10s, skip errors and unset conv check:
+11867 skips (first one is real.linear_order._proof_5)
+1:13:54 total time, 10,305,864 maxresident
+vo size 1.4GB
 
 *)
 
