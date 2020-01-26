@@ -1482,7 +1482,7 @@ let rec do_input state ch =
 
 let import f =
   lcnt := 1;
-  do_input empty_state (open_in f)
+  Flags.verbosely (fun () -> do_input empty_state (open_in f)) ()
 
 (* Lean stdlib:
 - 10244 entries (24065 possible instances)
@@ -1496,6 +1496,9 @@ Max universe instance length 4.
 
 export: 46s, 450KB ram(?)
 leanchecker: 8s, 80KB ram(?)
+
+unset conv check: 68s, 832740maxresident (from time dune exec)
+vo size 53MB
 *)
 
 (* mathlib:
@@ -1515,6 +1518,9 @@ export: takes a while and eats lots of ram
 leanchecker: 6min, 1GB ram (pretty stable ram usage)
 
 Coq takes 690KB ram in just parsing mode
+
+unset conv check: takes lots of ram after filter_mem_inf_sets_of_right
+(killed at around 4GB)
 
 *)
 
