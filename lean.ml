@@ -1508,7 +1508,7 @@ let rec do_input state ~from ~until ch =
             Pp.(
               str "Error at line " ++ int !lcnt
               ++ str (": " ^ l)
-              ++ CErrors.iprint e);
+              ++ fnl () ++ CErrors.iprint e);
           state (* TODO have a mode where errors are really errors *)
         end)
 
