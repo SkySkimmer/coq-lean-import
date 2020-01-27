@@ -1219,10 +1219,12 @@ let declare_ind state name ind =
     (fun state i -> fst (declare_ind state name ind i))
     state ind.univs
 
-let cur_name = ref N.anon
+let lcnt = ref 0
+
+let line_msg name =
+  Feedback.msg_info Pp.(str "line " ++ int !lcnt ++ str ": " ++ N.pp name)
 
 let do_line state l =
-  cur_name := N.anon;
   (* Lean printing strangeness: sometimes we get double spaces (typically with INFIX) *)
   match
     List.filter (fun s -> s <> "") (String.split_on_char ' ' (String.trim l))
@@ -1230,7 +1232,7 @@ let do_line state l =
   | [] -> state (* empty line *)
   | "#DEF" :: name :: ty :: body :: univs ->
     let name = get_name state name in
-    cur_name := name;
+    line_msg name;
     let ty = get_expr state ty
     and body = get_expr state body
     and univs = List.map (get_name state) univs in
@@ -1239,7 +1241,7 @@ let do_line state l =
     add_entry state name (Def def)
   | "#AX" :: name :: ty :: univs ->
     let name = get_name state name in
-    cur_name := name;
+    line_msg name;
     let ty = get_expr state ty
     and univs = List.map (get_name state) univs in
     let ax = { ty; univs } in
@@ -1247,7 +1249,7 @@ let do_line state l =
     add_entry state name (Ax ax)
   | "#IND" :: nparams :: name :: ty :: nctors :: rest ->
     let name = get_name state name in
-    cur_name := name;
+    line_msg name;
     let nparams = int_of_string nparams
     and ty = get_expr state ty
     and nctors = int_of_string nctors in
@@ -1261,6 +1263,7 @@ let do_line state l =
     let state = if just_parse () then state else declare_ind state name ind in
     add_entry state name (Ind ind)
   | [ "#QUOT" ] ->
+    line_msg (N.append N.anon "quot");
     let state, ok =
       if just_parse () then (state, true) else declare_quot state
     in
@@ -1359,8 +1362,6 @@ let do_line state l =
       CErrors.user_err
         Pp.(str "cannot understand " ++ str l ++ str "." ++ fnl ()))
 
-let lcnt = ref 0
-
 let rec is_arity = function
   | Sort _ -> true
   | Pi (_, _, _, b) -> is_arity b
@@ -1369,6 +1370,11 @@ let rec is_arity = function
 let print_squashes =
   Goptions.declare_bool_option_and_ref ~depr:false
     ~key:[ "Lean"; "Print"; "Squash"; "Info" ]
+    ~value:false
+
+let skip_errors =
+  Goptions.declare_bool_option_and_ref ~depr:false
+    ~key:[ "Lean"; "Skip"; "Errors" ]
     ~value:false
 
 let finish state =
@@ -1413,17 +1419,13 @@ let finish state =
       ++ int (RRange.length state.names)
       ++ str " names" ++ fnl () ++ str "- "
       ++ int (RRange.length state.exprs)
-      ++ str " expression nodes" ++ fnl () ++ str "Skipped " ++ int state.skips
-      ++ fnl ()
+      ++ str " expression nodes" ++ fnl ()
+      ++ (if state.skips > 0 then str "Skipped " ++ int state.skips ++ fnl ()
+         else mt ())
       ++ str "Max universe instance length "
       ++ int max_univs ++ str "." ++ fnl () ++ int nonarities
       ++ str " inductives have non syntactically arity types."
       ++ squashes)
-
-let skip_errors =
-  Goptions.declare_bool_option_and_ref ~depr:false
-    ~key:[ "Lean"; "Skip"; "Errors" ]
-    ~value:false
 
 let prtime t0 t1 =
   let diff = System.time_difference t0 t1 in
@@ -1452,7 +1454,6 @@ let () =
   Goptions.declare_int_option
     {
       optdepr = false;
-      optname = "lean per line timeout";
       optkey = [ "Lean"; "Line"; "Timeout" ];
       optread = (fun () -> !timeout);
       optwrite = (fun x -> timeout := x);
@@ -1480,11 +1481,10 @@ let rec do_input state ch =
       if skip_errors () then begin
         Feedback.msg_info
           Pp.(
-            str "Skipping: issue at line "
+            str "Skipping: error at line "
             ++ int !lcnt
             ++ str (": " ^ l)
-            ++ str " (current entry " ++ N.pp !cur_name ++ str ")" ++ fnl ()
-            ++ CErrors.iprint e);
+            ++ fnl () ++ CErrors.iprint e);
         incr lcnt;
         do_input { state with skips = state.skips + 1 } ch
       end
@@ -1493,15 +1493,15 @@ let rec do_input state ch =
         finish state;
         Feedback.msg_info
           Pp.(
-            str "issue at line " ++ int !lcnt
+            str "Error at line " ++ int !lcnt
             ++ str (": " ^ l)
-            ++ str " (current entry " ++ N.pp !cur_name ++ str ")" ++ fnl ()
-            ++ fnl () ++ CErrors.iprint e)
+            ++ CErrors.iprint e)
       end)
 
 let import f =
   lcnt := 1;
-  Flags.verbosely (fun () -> do_input empty_state (open_in f)) ()
+  (* silence the definition messages from Coq *)
+  Flags.silently (fun () -> do_input empty_state (open_in f)) ()
 
 (* Lean stdlib:
 - 10244 entries (24065 possible instances)
