@@ -1435,19 +1435,6 @@ let prtime t0 t1 =
         str "line " ++ int !lcnt ++ str " took "
         ++ System.fmt_time_difference t0 t1)
 
-let do_line state l =
-  let t0 = System.get_time () in
-  match do_line state l with
-  | state ->
-    let t1 = System.get_time () in
-    prtime t0 t1;
-    state
-  | exception e ->
-    let e = CErrors.push e in
-    let t1 = System.get_time () in
-    prtime t0 t1;
-    Exninfo.iraise e
-
 let timeout = ref None
 
 let () =
@@ -1465,6 +1452,20 @@ let do_line state l =
   match !timeout with
   | None -> do_line state l
   | Some t -> Control.timeout t (fun () -> do_line state l) () TimedOut
+
+let do_line state l =
+  let t0 = System.get_time () in
+  match do_line state l with
+  | state ->
+    let t1 = System.get_time () in
+    prtime t0 t1;
+    state
+  | exception e ->
+    let e = CErrors.push e in
+    (if fst e <> TimedOut then
+     let t1 = System.get_time () in
+     prtime t0 t1);
+    Exninfo.iraise e
 
 let rec do_input state ch =
   match input_line ch with
