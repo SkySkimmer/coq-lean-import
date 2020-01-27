@@ -10,14 +10,3 @@
 
 val import : from:int option -> until:int option -> string -> unit
 (** [from] is inclusive (lines start at 1), [until] is exclusive *)
-
-(** Mostly to silence val not used warnings *)
-module LeanName : sig
-  type t
-
-  val to_string : t -> string
-
-  module Set : Set.S with type elt = t
-
-  module Map : CMap.ExtS with type key = t and module Set := Set
-end

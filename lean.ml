@@ -241,7 +241,9 @@ module LeanName : sig
   val raw_append : t -> string -> t
   (** for private names *)
 
-  val to_string : t -> string
+  val to_coq_string : t -> string
+
+  val to_lean_string : t -> string
 
   val to_id : t -> Id.t
 
@@ -268,7 +270,9 @@ end = struct
 
   let to_name x = if x = [] then Anonymous else Name (to_id x)
 
-  let to_string x = String.concat "_" (List.rev x)
+  let to_coq_string x = String.concat "_" (List.rev x)
+
+  let to_lean_string x = String.concat "." (List.rev x)
 
   let pp x = Pp.(prlist_with_sep (fun () -> str ".") str) (List.rev x)
 
@@ -656,7 +660,7 @@ let finish_uconv state ounivs =
 
 let name_for_core n i =
   if i = 0 then N.to_id n
-  else Id.of_string (N.to_string n ^ "_inst" ^ string_of_int i)
+  else Id.of_string (N.to_coq_string n ^ "_inst" ^ string_of_int i)
 
 (* NB collisions for constructors/recursors are still possible but
    should be rare *)
@@ -669,13 +673,18 @@ let name_for n i =
     Namegen.next_global_ident_away base Id.Set.empty
 
 let get_predeclared_eq n i =
-  if String.equal (N.to_string n) "eq" then
+  if N.equal n (N.append N.anon "eq") then
     let ind_name = name_for_core n i in
-    match Nametab.locate (Libnames.qualid_of_ident ind_name) with
-    | IndRef (ind, 0) as ref ->
-      if Global.is_polymorphic ref then Some (ind_name, ind) else None
-    | _ -> None
-    | exception Not_found -> None
+    let reg = "lean." ^ Id.to_string ind_name in
+    match Coqlib.lib_ref reg with
+    | IndRef (ind, 0) -> Some (ind_name, ind)
+    | _ ->
+      CErrors.user_err
+        Pp.(
+          str "Bad registration for "
+          ++ str reg
+          ++ str " expected an inductive.")
+    | exception _ -> None
   else None
 
 let add_declared declared n i inst =
@@ -1051,8 +1060,6 @@ let squashify state n ind =
 
 let quot_name = N.append N.anon "quot"
 
-let quot_modname = Id.of_string "Quot"
-
 (* pairs of (name * number of univs) *)
 let quots = [ ("", 1); ("mk", 1); ("lift", 2); ("ind", 1) ]
 
@@ -1066,18 +1073,11 @@ let declare_quot state =
             let lean =
               if CString.is_empty n then quot_name else N.append quot_name n
             in
-            let id =
-              if CString.is_empty n then name_for_core quot_name i
-              else name_for_core (N.append N.anon n) i
+            let reg =
+              "lean." ^ N.to_lean_string lean
+              ^ if i = 0 then "" else "_inst" ^ string_of_int i
             in
-            let qualid =
-              Libnames.make_qualid (DirPath.make [ quot_modname ]) id
-            in
-            let ref =
-              try Nametab.locate qualid
-              with Not_found ->
-                CErrors.user_err Pp.(str "missing Quot." ++ Id.print id)
-            in
+            let ref = Coqlib.lib_ref reg in
             let declared = add_declared declared lean i { ref; algs = [] } in
             loop declared (i + 1)
         in
@@ -1094,16 +1094,11 @@ let skip_missing_quot =
     ~value:true
 
 let declare_quot state =
-  match
-    Nametab.locate
-      (Libnames.make_qualid (DirPath.make [ quot_modname ]) (N.to_id quot_name))
-  with
-  | _ -> (declare_quot state, true)
-  | exception Not_found ->
-    if skip_missing_quot () then (
-      Feedback.msg_info Pp.(str "Skipping: missing quotient");
-      (state, false))
-    else CErrors.user_err Pp.(str "missing quotient")
+  if Coqlib.has_ref "lean.quot" then (declare_quot state, true)
+  else if skip_missing_quot () then (
+    Feedback.msg_info Pp.(str "Skipping: missing quotient");
+    (state, false))
+  else CErrors.user_err Pp.(str "missing quotient")
 
 let empty_state =
   {
