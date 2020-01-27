@@ -1516,7 +1516,7 @@ Max universe instance length 4.
 export: 46s, 450KB ram(?)
 leanchecker: 8s, 80KB ram(?)
 
-unset conv check: 68s, 832740maxresident (from time dune exec)
+unset conv check: 43s, 723296 maxresident (from time dune exec)
 vo size 53MB
 *)
 
@@ -1538,7 +1538,7 @@ leanchecker: 6min, 1GB ram (pretty stable ram usage)
 
 Coq takes 690KB ram in just parsing mode
 
-unset conv check: takes lots of ram after filter_mem_inf_sets_of_right
+unset conv check (old): takes lots of ram after filter_mem_inf_sets_of_right
 (killed at around 4GB)
 
 with per line timeout 10s, skip errors and unset conv check:
