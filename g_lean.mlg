@@ -16,5 +16,5 @@ let init () = ()
 }
 
 VERNAC COMMAND EXTEND LeanImport CLASSIFIED AS SIDEFF
-| [ "Lean" "Import" string(f) ] -> { Lean.import f }
+| [ "Lean" "Import" string(f) int_opt(from) int_opt(until) ] -> { Lean.import f ~from ~until }
 END

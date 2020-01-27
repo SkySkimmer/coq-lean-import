@@ -1467,42 +1467,56 @@ let do_line state l =
      prtime t0 t1);
     Exninfo.iraise e
 
-let rec do_input state ch =
-  match input_line ch with
-  | exception End_of_file ->
-    close_in ch;
-    finish state
-  | l ->
-    (match do_line state l with
-    | state ->
-      incr lcnt;
-      do_input state ch
-    | exception e ->
-      let e = CErrors.push e in
-      if skip_errors () then begin
-        Feedback.msg_info
-          Pp.(
-            str "Skipping: error at line "
-            ++ int !lcnt
-            ++ str (": " ^ l)
-            ++ fnl () ++ CErrors.iprint e);
-        incr lcnt;
-        do_input { state with skips = state.skips + 1 } ch
-      end
-      else begin
-        close_in ch;
-        finish state;
-        Feedback.msg_info
-          Pp.(
-            str "Error at line " ++ int !lcnt
-            ++ str (": " ^ l)
-            ++ CErrors.iprint e)
-      end)
+let state = Summary.ref ~name:"lean-state" empty_state
 
-let import f =
+let before_from = function None -> false | Some from -> !lcnt < from
+
+let rec do_input state ~from ~until ch =
+  if until = Some !lcnt then begin
+    close_in ch;
+    finish state;
+    state
+  end
+  else
+    match input_line ch with
+    | exception End_of_file ->
+      close_in ch;
+      finish state;
+      if not (until = None) then CErrors.user_err Pp.(str "unexpected EOF!");
+      state
+    | l ->
+      (match if before_from from then state else do_line state l with
+      | state ->
+        incr lcnt;
+        do_input state ~from ~until ch
+      | exception e ->
+        let e = CErrors.push e in
+        if skip_errors () then begin
+          Feedback.msg_info
+            Pp.(
+              str "Skipping: error at line "
+              ++ int !lcnt
+              ++ str (": " ^ l)
+              ++ fnl () ++ CErrors.iprint e);
+          incr lcnt;
+          do_input { state with skips = state.skips + 1 } ~from ~until ch
+        end
+        else begin
+          close_in ch;
+          finish state;
+          Feedback.msg_info
+            Pp.(
+              str "Error at line " ++ int !lcnt
+              ++ str (": " ^ l)
+              ++ CErrors.iprint e);
+          state (* TODO have a mode where errors are really errors *)
+        end)
+
+let import ~from ~until f =
   lcnt := 1;
   (* silence the definition messages from Coq *)
-  Flags.silently (fun () -> do_input empty_state (open_in f)) ()
+  state :=
+    Flags.silently (fun () -> do_input !state ~from ~until (open_in f)) ()
 
 (* Lean stdlib:
 - 10244 entries (24065 possible instances)
@@ -1519,6 +1533,17 @@ leanchecker: 8s, 80KB ram(?)
 
 unset conv check: 43s, 723296 maxresident (from time dune exec)
 vo size 53MB
+
+with 10s timeout, unset upfront instances and set conv check:
+451s, 720824 maxresident
+vo size 50MB
+89 skips (32 timeout, 55 not instantiated)
+
+2 assert failed Map.get
+line 383456: int.eq_one_of_mul_eq_self_right
+line 521542: int.eq_one_of_mul_eq_self_left
+
+with 10s timeout, set conv check, set upfront instances:
 *)
 
 (* mathlib:

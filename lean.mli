@@ -8,7 +8,8 @@
 (*         *     (see LICENSE file for the text of the license)         *)
 (************************************************************************)
 
-val import : string -> unit
+val import : from:int option -> until:int option -> string -> unit
+(** [from] is inclusive (lines start at 1), [until] is exclusive *)
 
 (** Mostly to silence val not used warnings *)
 module LeanName : sig
