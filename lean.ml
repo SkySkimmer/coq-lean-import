@@ -316,7 +316,7 @@ let rec to_universe map = function
 
 let rec do_n f x n = if n = 0 then x else do_n f (f x) (n - 1)
 
-(** in lean, max(Prop+1,l)+1 <= max(Prop+1,l+1)
+(** in lean, imax(Prop+1,l)+1 <= max(Prop+1,l+1)
    because:
    - either l=Prop, so Prop+1 <= Prop+1
    - or Prop+1 <= l so l+1 <= l+1
@@ -1543,6 +1543,15 @@ line 383456: int.eq_one_of_mul_eq_self_right
 line 521542: int.eq_one_of_mul_eq_self_left
 
 with 10s timeout, set conv check, set upfront instances:
+*)
+
+(* init.out
+- 8642 entries (21020 possible instances) (including quot).
+- 245 universe expressions
+- 11601 names
+- 395540 expression nodes
+Max universe instance length 4.
+0 inductives have non syntactically arity types.
 *)
 
 (* mathlib:
