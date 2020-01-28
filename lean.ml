@@ -1480,12 +1480,16 @@ let rec do_input state ~from ~until ch =
       if not (until = None) then CErrors.user_err Pp.(str "unexpected EOF!");
       state
     | l ->
+      let st = States.freeze ~marshallable:false in
       (match if before_from from then state else do_line state l with
       | state ->
         incr lcnt;
         do_input state ~from ~until ch
       | exception e ->
         let e = CErrors.push e in
+        States.unfreeze st;
+        (* without this unfreeze, the global state.declared and the
+           global env are out of sync *)
         if skip_errors () then begin
           Feedback.msg_info
             Pp.(
