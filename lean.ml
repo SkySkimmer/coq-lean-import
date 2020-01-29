@@ -1523,10 +1523,16 @@ leanchecker: 8s, 80KB ram(?)
 unset conv check: 43s, 723296 maxresident (from time dune exec)
 vo size 53MB
 
-with 10s timeout, unset upfront instances and set conv check:
-451s, 720824 maxresident
-vo size 50MB
-89 skips (32 timeout, 55 not instantiated)
+with 10s timeout, set upfront instances and set conv check:
+320, 1161896 (1GB) maxresident
+vo size 111MB
+11 skips (3 timeout, 8 not instantiated)
+
+all timeouts are bla.equations._eqn_1, where bla in
+- tactic.delta_config.max_steps._default
+- char.of_nat
+- simp.default_max_steps
+These all involve moderately sized integers (of_nat through is_valid)
 
 2 assert failed Map.get
 line 383456: int.eq_one_of_mul_eq_self_right
