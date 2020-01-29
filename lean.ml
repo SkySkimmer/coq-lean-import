@@ -232,7 +232,7 @@ module LeanName : sig
 
   val anon : t
 
-  val of_list : string list -> t
+  val of_list : string list -> t [@@warning "-32"]
 
   val append : t -> string -> t
 
@@ -427,7 +427,7 @@ type expr =
   | Lam of binder_kind * N.t * expr * expr
   | Pi of binder_kind * N.t * expr * expr
 
-type def = { ty : expr; body : expr; univs : N.t list }
+type def = { ty : expr; body : expr; univs : N.t list; height : int }
 
 type ax = { ty : expr; univs : N.t list }
 
@@ -439,6 +439,25 @@ type ind = {
 }
 
 type entry = Def of def | Ax of ax | Ind of ind | Quot
+
+(** Definitional height, used for unfolding heuristics.
+
+   The definitional height is the longest sequence of constant
+   unfoldings until we get a term without definitions (recursors don't
+   count). *)
+let height entries =
+  let rec h = function
+    | Const (c, _) ->
+      (match N.Map.find c entries with
+      | exception Not_found ->
+        0 (* maybe a constructor or recursor, or just skipped *)
+      | Def { height } -> height + 1
+      | Quot | Ax _ | Ind _ -> 0)
+    | Bound _ | Sort _ -> 0
+    | Lam (_, _, a, b) | Pi (_, _, a, b) | App (a, b) -> max (h a) (h b)
+    | Let { name = _; ty; v; rest } -> max (h ty) (max (h v) (h rest))
+  in
+  h
 
 type notation_kind = Prefix | Infix | Postfix
 
@@ -689,8 +708,6 @@ let to_univ_level' u state =
   let uconv, u = to_univ_level u state.uconv in
   ({ state with uconv }, u)
 
-let std_prec_max = N.of_list [ "max"; "prec"; "std" ]
-
 (* with this off: best line 23000 in stdlib
    stack overflow
 
@@ -767,7 +784,7 @@ and ensure_exists (state : unit state) n i =
     | Ind ind -> declare_ind state n ind i
     | Quot -> CErrors.anomaly Pp.(str "quot must be predeclared"))
 
-and declare_def state n { ty; body; univs } i =
+and declare_def state n { ty; body; univs; height } i =
   let state = start_uconv state univs i in
   let state, ty = to_constr ty state in
   let state, body = to_constr body state in
@@ -775,11 +792,8 @@ and declare_def state n { ty; body; univs } i =
   let entry = Declare.definition_entry ~opaque:false ~types:ty ~univs body in
   let ref = quickdef ~name:(name_for n i) entry [] in
   let () =
-    if N.equal n std_prec_max then
-      (* HACK needed to pass [std.prec.max.equations._eqn_1 : std.prec.max = 1024]
-         without taking forever *)
-      let c = match ref with ConstRef c -> c | _ -> assert false in
-      Global.set_strategy (ConstKey c) Expand
+    let c = match ref with ConstRef c -> c | _ -> assert false in
+    Global.set_strategy (ConstKey c) (Level (-height))
   in
   let inst = { ref; algs } in
   let declared = add_declared state.declared n i inst in
@@ -1221,7 +1235,8 @@ let do_line state l =
     let ty = get_expr state ty
     and body = get_expr state body
     and univs = List.map (get_name state) univs in
-    let def = { ty; body; univs } in
+    let height = height state.entries body in
+    let def = { ty; body; univs; height } in
     let state = if just_parse () then state else declare_def state name def in
     add_entry state name (Def def)
   | "#AX" :: name :: ty :: univs ->
@@ -1523,22 +1538,22 @@ leanchecker: 8s, 80KB ram(?)
 unset conv check: 43s, 723296 maxresident (from time dune exec)
 vo size 53MB
 
-with 10s timeout, set upfront instances and set conv check:
-320, 1161896 (1GB) maxresident
-vo size 111MB
-11 skips (3 timeout, 8 not instantiated)
+Now passes!
+With 10s timeout, set upfront instances and set conv check:
+284s, 1284096KB (1.3GB) RAM
+vo size 116MB
+coqchk: 540s, 1105372KB (1.1GB) RAM
+the vast majority of that time is spent in Validate.validate, with validation off we get
+51s, 723160KB (720MB) RAM
+If we use Marshal instead of Analyze.instantiate it takes 45s and 380676KB (380MB) RAM
 
-all timeouts are bla.equations._eqn_1, where bla in
-- tactic.delta_config.max_steps._default
-- char.of_nat
-- simp.default_max_steps
-These all involve moderately sized integers (of_nat through is_valid)
+Axioms: real stuff, quot_sound(_inst1), classical_choice(_inst1), propext, io monad stuff
 
-2 assert failed Map.get
-line 383456: int.eq_one_of_mul_eq_self_right
-line 521542: int.eq_one_of_mul_eq_self_left
-
-with 10s timeout, set conv check, set upfront instances:
+450 inductives and constants rely on type-in-type (this includes the autodeclared eliminators,
+TODO fix that)
+without eliminators: 90 inductives, 42 if we don't count instances separately
+After a quick look it seems acc would be the only one if we translated to
+primitive records when possible
 *)
 
 (* init.out
