@@ -292,16 +292,6 @@ module N = LeanName
 
 module U = struct
   type t = Prop | Succ of t | Max of t * t | IMax of t * t | UNamed of N.t
-
-  let compare : t -> t -> int = compare
-
-  module Self = struct
-    type nonrec t = t
-
-    let compare = compare
-  end
-
-  module Map = CMap.Make (Self)
 end
 
 (** [map] goes from lean names to universes (in practice either SProp or a named level) *)
