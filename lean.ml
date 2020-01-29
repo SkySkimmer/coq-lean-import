@@ -1595,15 +1595,12 @@ vo size 1.4GB
 
 *)
 
-(* TODO: L97664 in stdlib (div_lt_div_of_mul_sub_mul_div_neg)
-   takes too long
-   two_pos also takes forever, it's ridiculous
-
-   first line that takes a while is L36382 mul_le_mul_of_nonpos_right (20s, 2 instantiations)
-   from ordered_ring.lean
+(* TODO: see how mathlib goes after the irrelevance check update and the defheight update
 
    TODO: globalize Set+1 univs?
 
    use primitive records for record-like types?
-   how to translate the projections correctly?
+   how to translate the projections correctly (for perf)?
+
+   use primitive records for subsingletons when possible (less types use type-in-type)
  *)
