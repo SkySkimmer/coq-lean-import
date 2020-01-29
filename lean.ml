@@ -957,6 +957,8 @@ and declare_ind state n { params; ty; ctors; univs } i =
             []
           (* TODO implicits? *)
         in
+        (* TODO AFAICT Lean reduces recursors eagerly, but ofc only when applied to a ctor
+           Can we simulate that with strategy better than by leaving them at the default strat? *)
         let liftu l =
           match Level.var_index l with
           | None -> Universe.make l (* Set *)
