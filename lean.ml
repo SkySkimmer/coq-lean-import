@@ -601,24 +601,6 @@ let coq_squashes graph (entry : Entries.mutual_inductive_entry) =
     | _ :: _ :: _ -> true
     | [ c ] -> (match Constr.kind c with Rel _ | App _ -> false | _ -> true)
 
-type 'uconv state = {
-  names : N.t RRange.t;
-  exprs : expr RRange.t;
-  univs : U.t RRange.t;
-  uconv : 'uconv;
-  skips : int;
-  entries : entry N.Map.t;
-  squash_info : squashy N.Map.t;
-  declared : instantiation Int.Map.t N.Map.t;
-      (** For each name, the instantiation with all non-sprop univs should
-     always be declared, but the instantiations with SProp are lazily
-     declared. We expect small instance lengths (experimentally at
-     most 4 in the stdlib) so we represent instantiations as bit
-     fields, bit n is 1 iff universe n is instantiated by SProp. *)
-  notations : notation list;
-}
-(** 'uconv is unit when not converting an entry *)
-
 (** the kernel will deal with the relevance annot *)
 let to_annot n = Context.annotR (N.to_name n)
 
@@ -641,7 +623,7 @@ let univ_of_name u =
     Level.(make (UGlobal.make u 0))
   else UnivGen.fresh_level ()
 
-let start_uconv (state : unit state) univs i =
+let start_uconv univs i =
   let uconv =
     {
       graph = Global.universes ();
@@ -664,8 +646,7 @@ let start_uconv (state : unit state) univs i =
       in
       aux { uconv with map; graph } (i / 2) univs
   in
-  let uconv = aux uconv i univs in
-  { state with uconv }
+  aux uconv i univs
 
 let rec make_unames univs ounivs =
   match (univs, ounivs) with
@@ -715,9 +696,6 @@ let univ_entry { map; levels; graph } ounivs =
    drop the [u] and keep only the replacement for [u+1]??
 
    Preserve algebraics in codomain position? *)
-let finish_uconv state ounivs =
-  let univs = univ_entry state.uconv ounivs in
-  ({ state with uconv = () }, univs)
 
 let name_for_core n i =
   if i = 0 then N.to_id n
@@ -748,17 +726,32 @@ let get_predeclared_eq n i =
     | exception _ -> None
   else None
 
-let add_declared declared n i inst =
-  N.Map.update n
-    (function
-      | None -> Some (Int.Map.singleton i inst)
-      | Some m -> Some (Int.Map.add i inst m))
-    declared
+(** For each name, the instantiation with all non-sprop univs should
+   always be declared, but the instantiations with SProp may be lazily
+   declared. We expect small instance lengths (experimentally at most
+   4 in the stdlib) so we represent instantiations as bit fields, bit
+   n is 1 iff universe n is instantiated by SProp. *)
+let declared : instantiation Int.Map.t N.Map.t ref =
+  Summary.ref ~name:"lean-declared-instances" N.Map.empty
 
-let to_univ_level' u state =
-  let u = to_universe state.uconv.map u in
-  let uconv, u = to_univ_level u state.uconv in
-  ({ state with uconv }, u)
+let entries : entry N.Map.t ref = Summary.ref ~name:"lean-entries" N.Map.empty
+
+let squash_info : squashy N.Map.t ref =
+  Summary.ref ~name:"lean-squash-info" N.Map.empty
+
+(* TODO [declared] should have a libobject (maybe along with entries/squash info) *)
+
+let add_declared n i inst =
+  declared :=
+    N.Map.update n
+      (function
+        | None -> Some (Int.Map.singleton i inst)
+        | Some m -> Some (Int.Map.add i inst m))
+      !declared
+
+let to_univ_level' u uconv =
+  let u = to_universe uconv.map u in
+  to_univ_level u uconv
 
 (* with this off: best line 23000 in stdlib
    stack overflow
@@ -772,11 +765,11 @@ let upfront_instances =
 
 let rec to_constr =
   let open Constr in
-  let ( >>= ) x f state =
-    let state, x = x state in
-    f x state
+  let ( >>= ) x f uconv =
+    let uconv, x = x uconv in
+    f x uconv
   in
-  let ret x state = (state, x) in
+  let ret x uconv = (uconv, x) in
   function
   | Bound i -> ret (mkRel (i + 1))
   | Sort univ ->
@@ -797,15 +790,12 @@ let rec to_constr =
     to_constr a >>= fun a ->
     to_constr b >>= fun b -> ret (mkProd (to_annot n, a, b))
 
-and instantiate n univs state =
+and instantiate n univs uconv =
   assert (List.length univs < Sys.int_size);
   (* TODO what happens when is_large_elim and the motive is instantiated with Prop? *)
-  let univs = List.map (to_universe state.uconv.map) univs in
+  let univs = List.map (to_universe uconv.map) univs in
   let i, univs = int_of_univs univs in
-  let uconv = state.uconv in
-  let (state : unit state), inst =
-    ensure_exists { state with uconv = () } n i
-  in
+  let inst = ensure_exists n i in
   let subst l =
     match Level.var_index l with
     | None -> Universe.make l
@@ -818,29 +808,29 @@ and instantiate n univs state =
   in
   let univs = List.concat [ univs; extra ] in
   let uconv, univs =
-    CList.fold_left_map (fun state u -> to_univ_level u state) uconv univs
+    CList.fold_left_map (fun uconv u -> to_univ_level u uconv) uconv univs
   in
   let u = Instance.of_array (Array.of_list univs) in
-  ({ state with uconv }, Constr.mkRef (inst.ref, u))
+  (uconv, Constr.mkRef (inst.ref, u))
 
-and ensure_exists state n i =
-  try (state, state.declared |> N.Map.find n |> Int.Map.find i)
+and ensure_exists n i =
+  try !declared |> N.Map.find n |> Int.Map.find i
   with Not_found ->
     (* TODO can we end up asking for a ctor or eliminator before
        asking for the inductive type? *)
     if i = 0 then CErrors.anomaly Pp.(N.pp n ++ str " was not instantiated!");
     assert (not (upfront_instances ()));
-    (match N.Map.get n state.entries with
-    | Def def -> declare_def state n def i
-    | Ax ax -> declare_ax state n ax i
-    | Ind ind -> declare_ind state n ind i
+    (match N.Map.get n !entries with
+    | Def def -> declare_def n def i
+    | Ax ax -> declare_ax n ax i
+    | Ind ind -> declare_ind n ind i
     | Quot -> CErrors.anomaly Pp.(str "quot must be predeclared"))
 
-and declare_def state n { ty; body; univs; height } i =
-  let state = start_uconv state univs i in
-  let state, ty = to_constr ty state in
-  let state, body = to_constr body state in
-  let state, (univs, algs) = finish_uconv state univs in
+and declare_def n { ty; body; univs; height } i =
+  let uconv = start_uconv univs i in
+  let uconv, ty = to_constr ty uconv in
+  let uconv, body = to_constr body uconv in
+  let univs, algs = univ_entry uconv univs in
   let entry = Declare.definition_entry ~opaque:false ~types:ty ~univs body in
   let ref = quickdef ~name:(name_for n i) entry [] in
   let () =
@@ -848,13 +838,13 @@ and declare_def state n { ty; body; univs; height } i =
     Global.set_strategy (ConstKey c) (Level (-height))
   in
   let inst = { ref; algs } in
-  let declared = add_declared state.declared n i inst in
-  ({ state with declared }, inst)
+  let () = add_declared n i inst in
+  inst
 
-and declare_ax state n { ty; univs } i =
-  let state = start_uconv state univs i in
-  let state, ty = to_constr ty state in
-  let state, (univs, algs) = finish_uconv state univs in
+and declare_ax n { ty; univs } i =
+  let uconv = start_uconv univs i in
+  let uconv, ty = to_constr ty uconv in
+  let univs, algs = univ_entry uconv univs in
   let entry = Declare.ParameterEntry (None, (ty, univs), None) in
   let c =
     Declare.declare_constant ~name:(name_for n i)
@@ -862,21 +852,21 @@ and declare_ax state n { ty; univs } i =
       entry
   in
   let inst = { ref = GlobRef.ConstRef c; algs } in
-  let declared = add_declared state.declared n i inst in
-  ({ state with declared }, inst)
+  let () = add_declared n i inst in
+  inst
 
-and to_params state params =
-  let state, params =
+and to_params uconv params =
+  let uconv, params =
     CList.fold_left_map
-      (fun state (_bk, p, ty) ->
-        let state, ty = to_constr ty state in
-        (state, RelDecl.LocalAssum (to_annot p, ty)))
-      state params
+      (fun uconv (_bk, p, ty) ->
+        let uconv, ty = to_constr ty uconv in
+        (uconv, RelDecl.LocalAssum (to_annot p, ty)))
+      uconv params
   in
-  (state, List.rev params)
+  (uconv, List.rev params)
 
-and declare_ind state n { params; ty; ctors; univs } i =
-  let state, mind, algs, ind_name, cnames, univs, squashy =
+and declare_ind n { params; ty; ctors; univs } i =
+  let mind, algs, ind_name, cnames, univs, squashy =
     match get_predeclared_eq n i with
     | Some (ind_name, mind) ->
       (* Hack to let the user predeclare eq and quot before running Lean Import
@@ -897,21 +887,21 @@ and declare_ind state n { params; ty; ctors; univs } i =
         | 1 -> Entries.Polymorphic_entry ([||], UContext.empty)
         | _ -> assert false
       in
-      (state, mind, [], ind_name, [ cname ], univs, squashy)
+      (mind, [], ind_name, [ cname ], univs, squashy)
     | None ->
-      let state = start_uconv state univs i in
-      let state, params = to_params state params in
-      let state, ty = to_constr ty state in
-      let state, ctors =
+      let uconv = start_uconv univs i in
+      let uconv, params = to_params uconv params in
+      let uconv, ty = to_constr ty uconv in
+      let uconv, ctors =
         CList.fold_left_map
-          (fun state (n, ty) ->
-            let state, ty = to_constr ty state in
-            (state, (n, ty)))
-          state ctors
+          (fun uconv (n, ty) ->
+            let uconv, ty = to_constr ty uconv in
+            (uconv, (n, ty)))
+          uconv ctors
       in
       let cnames, ctys = List.split ctors in
-      let graph = state.uconv.graph in
-      let state, (univs, algs) = finish_uconv state univs in
+      let graph = uconv.graph in
+      let univs, algs = univ_entry uconv univs in
       let ind_name = name_for n i in
       let entry =
         {
@@ -933,7 +923,7 @@ and declare_ind state n { params; ty; ctors; univs } i =
           mind_entry_cumulative = false;
         }
       in
-      let squashy = N.Map.get n state.squash_info in
+      let squashy = N.Map.get n !squash_info in
       let coq_squashes =
         if squashy.maybe_prop then coq_squashes graph entry else false
       in
@@ -948,18 +938,18 @@ and declare_ind state n { params; ty; ctors; univs } i =
       assert (
         squashy.lean_squashes
         || (Global.lookup_mind mind).mind_packets.(0).mind_kelim == InType);
-      (state, mind, algs, ind_name, cnames, univs, squashy)
+      (mind, algs, ind_name, cnames, univs, squashy)
   in
 
   (* add ind and ctors to [declared] *)
   let inst = { ref = GlobRef.IndRef (mind, 0); algs } in
-  let declared = add_declared state.declared n i inst in
-  let declared =
-    CList.fold_left_i
-      (fun cnum declared cname ->
-        add_declared declared cname i
+  let () = add_declared n i inst in
+  let () =
+    CList.iteri
+      (fun cnum cname ->
+        add_declared cname i
           { ref = GlobRef.ConstructRef ((mind, 0), cnum + 1); algs })
-      0 declared cnames
+      cnames
   in
 
   (* elim *)
@@ -998,9 +988,9 @@ and declare_ind state n { params; ty; ctors; univs } i =
     if squashy.lean_squashes then [ ("_indl", Sorts.InSProp) ]
     else [ ("_recl", InType); ("_indl", InSProp) ]
   in
-  let declared =
-    List.fold_left
-      (fun declared (suffix, sort) ->
+  let () =
+    List.iter
+      (fun (suffix, sort) ->
         let id = Id.of_string (Id.to_string ind_name ^ suffix) in
         let body, uentry = make_scheme sort in
         let elim =
@@ -1026,45 +1016,40 @@ and declare_ind state n { params; ty; ctors; univs } i =
           else if sort == InType then 2 * i
           else (2 * i) + 1
         in
-        add_declared declared nrec j elim)
-      declared elims
+        add_declared nrec j elim)
+      elims
   in
-  ({ state with declared }, inst)
+  inst
 
 (** Generate and add the squashy info *)
-let squashify state n { params; ty; ctors; univs } =
-  let stateP =
+let squashify n { params; ty; ctors; univs } =
+  let uconvP =
     (* NB: if univs = [] this is just instantiation 0 *)
-    start_uconv state univs ((1 lsl List.length univs) - 1)
+    start_uconv univs ((1 lsl List.length univs) - 1)
   in
-  let stateP, paramsP = to_params stateP params in
-  let stateP, tyP = to_constr ty stateP in
-  let state = { state with declared = stateP.declared } in
+  let uconvP, paramsP = to_params uconvP params in
+  let uconvP, tyP = to_constr ty uconvP in
   let envP =
     Environ.push_rel_context paramsP
-      (Environ.set_universes (Global.env ()) stateP.uconv.graph)
+      (Environ.set_universes (Global.env ()) uconvP.graph)
   in
   let _, sortP = Reduction.dest_arity envP tyP in
-  if not (Sorts.is_sprop sortP) then (state, noprop)
+  if not (Sorts.is_sprop sortP) then noprop
   else
-    let stateT = start_uconv state univs 0 in
-    let stateT, paramsT = to_params stateT params in
-    let stateT, tyT = to_constr ty stateT in
+    let uconvT = start_uconv univs 0 in
+    let uconvT, paramsT = to_params uconvT params in
+    let uconvT, tyT = to_constr ty uconvT in
     let envT =
       Environ.push_rel_context paramsT
-        (Environ.set_universes (Global.env ()) stateT.uconv.graph)
+        (Environ.set_universes (Global.env ()) uconvT.graph)
     in
     let _, sortT = Reduction.dest_arity envT tyT in
     let always_prop = Sorts.is_sprop sortT in
     match ctors with
-    | [] ->
-      ( { state with declared = stateT.declared },
-        { maybe_prop = true; always_prop; lean_squashes = false } )
-    | _ :: _ :: _ ->
-      ( { state with declared = stateT.declared },
-        { maybe_prop = true; always_prop; lean_squashes = true } )
+    | [] -> { maybe_prop = true; always_prop; lean_squashes = false }
+    | _ :: _ :: _ -> { maybe_prop = true; always_prop; lean_squashes = true }
     | [ (_, ctor) ] ->
-      let stateT, ctorT = to_constr ctor stateT in
+      let uconvT, ctorT = to_constr ctor uconvT in
       let envT =
         Environ.push_rel_context paramsT
           (Environ.push_rel
@@ -1072,7 +1057,7 @@ let squashify state n { params; ty; ctors; univs } =
                 ( Context.make_annot (N.to_name n)
                     (Sorts.relevance_of_sort sortT),
                   Term.it_mkProd_or_LetIn tyT paramsT ))
-             (Environ.set_universes (Global.env ()) stateT.uconv.graph))
+             (Environ.set_universes (Global.env ()) uconvT.graph))
       in
       let args, out = Reduction.dest_prod envT ctorT in
       let forced =
@@ -1109,24 +1094,23 @@ let squashify state n { params; ty; ctors; univs } =
           args ~init:(false, 0, envT)
       in
       (* TODO translate to use non recursively uniform params (fix extraction)*)
-      ( { state with declared = stateT.declared },
-        { maybe_prop = true; always_prop; lean_squashes } )
+      { maybe_prop = true; always_prop; lean_squashes }
 
-let squashify state n ind =
-  let state, s = squashify state n ind in
-  { state with squash_info = N.Map.add n s state.squash_info }
+let squashify n ind =
+  let s = squashify n ind in
+  squash_info := N.Map.add n s !squash_info
 
 let quot_name = N.append N.anon "quot"
 
 (* pairs of (name * number of univs) *)
 let quots = [ ("", 1); ("mk", 1); ("lift", 2); ("ind", 1) ]
 
-let declare_quot state =
-  let declared =
-    List.fold_left
-      (fun declared (n, nunivs) ->
-        let rec loop declared i =
-          if i = 1 lsl nunivs then declared
+let declare_quot () =
+  let () =
+    List.iter
+      (fun (n, nunivs) ->
+        let rec loop i =
+          if i = 1 lsl nunivs then ()
           else
             let lean =
               if CString.is_empty n then quot_name else N.append quot_name n
@@ -1136,14 +1120,13 @@ let declare_quot state =
               ^ if i = 0 then "" else "_inst" ^ string_of_int i
             in
             let ref = Coqlib.lib_ref reg in
-            let declared = add_declared declared lean i { ref; algs = [] } in
-            loop declared (i + 1)
+            let () = add_declared lean i { ref; algs = [] } in
+            loop (i + 1)
         in
-        loop declared 0)
-      state.declared quots
+        loop 0)
+      quots
   in
-  Feedback.msg_info Pp.(str "quot registered");
-  { state with declared }
+  Feedback.msg_info Pp.(str "quot registered")
 
 let skip_missing_quot =
   Goptions.declare_bool_option_and_ref ~depr:false
@@ -1151,25 +1134,14 @@ let skip_missing_quot =
     ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
     ~value:true
 
-let declare_quot state =
-  if Coqlib.has_ref "lean.quot" then (declare_quot state, true)
+let declare_quot () =
+  if Coqlib.has_ref "lean.quot" then (
+    declare_quot ();
+    true)
   else if skip_missing_quot () then (
     Feedback.msg_info Pp.(str "Skipping: missing quotient");
-    (state, false))
+    false)
   else CErrors.user_err Pp.(str "missing quotient")
-
-let empty_state =
-  {
-    names = RRange.singleton N.anon;
-    exprs = RRange.empty;
-    univs = RRange.singleton U.Prop;
-    uconv = ();
-    skips = 0;
-    entries = N.Map.empty;
-    squash_info = N.Map.empty;
-    declared = N.Map.empty;
-    notations = [];
-  }
 
 let do_bk = function
   | "#BD" -> NotImplicit
@@ -1185,6 +1157,23 @@ let do_notation_kind = function
   | "#INFIX" -> Infix
   | "#POSTFIX" -> Postfix
   | k -> assert false
+
+type state = {
+  names : N.t RRange.t;
+  exprs : expr RRange.t;
+  univs : U.t RRange.t;
+  skips : int;
+  notations : notation list;
+}
+
+let empty_state =
+  {
+    names = RRange.singleton N.anon;
+    exprs = RRange.empty;
+    univs = RRange.singleton U.Prop;
+    skips = 0;
+    notations = [];
+  }
 
 let get_name state n =
   let n = int_of_string n in
@@ -1236,8 +1225,7 @@ let fix_ctor ind nparams ty =
   let _, ty = pop_params nparams ty in
   replace_ind ind nparams ty
 
-let add_entry state n entry =
-  { state with entries = N.Map.add n entry state.entries }
+let add_entry n entry = entries := N.Map.add n entry !entries
 
 let as_univ state s = RRange.get state.univs (int_of_string s)
 
@@ -1246,31 +1234,25 @@ let just_parse =
     ~key:[ "Lean"; "Just"; "Parsing" ]
     ~value:false
 
-let declare_instances act state univs =
+let declare_instances act univs =
   let stop = if upfront_instances () then 1 lsl List.length univs else 1 in
-  let rec loop state i =
-    if i = stop then state
+  let rec loop i =
+    if i = stop then ()
     else
-      let state = act state i in
-      loop state (i + 1)
+      let () = act i in
+      loop (i + 1)
   in
-  loop state 0
+  loop 0
 
-let declare_def state name def =
-  declare_instances
-    (fun state i -> fst (declare_def state name def i))
-    state def.univs
+let declare_def name def =
+  declare_instances (fun i -> ignore (declare_def name def i)) def.univs
 
-let declare_ax state name ax =
-  declare_instances
-    (fun state i -> fst (declare_ax state name ax i))
-    state ax.univs
+let declare_ax name ax =
+  declare_instances (fun i -> ignore (declare_ax name ax i)) ax.univs
 
-let declare_ind state name ind =
-  let state = squashify state name ind in
-  declare_instances
-    (fun state i -> fst (declare_ind state name ind i))
-    state ind.univs
+let declare_ind name ind =
+  let () = squashify name ind in
+  declare_instances (fun i -> ignore (declare_ind name ind i)) ind.univs
 
 let lcnt = ref 0
 
@@ -1289,18 +1271,20 @@ let do_line state l =
     let ty = get_expr state ty
     and body = get_expr state body
     and univs = List.map (get_name state) univs in
-    let height = height state.entries body in
+    let height = height !entries body in
     let def = { ty; body; univs; height } in
-    let state = if just_parse () then state else declare_def state name def in
-    add_entry state name (Def def)
+    let () = if not (just_parse ()) then declare_def name def in
+    add_entry name (Def def);
+    state
   | "#AX" :: name :: ty :: univs ->
     let name = get_name state name in
     line_msg name;
     let ty = get_expr state ty
     and univs = List.map (get_name state) univs in
     let ax = { ty; univs } in
-    let state = if just_parse () then state else declare_ax state name ax in
-    add_entry state name (Ax ax)
+    let () = if not (just_parse ()) then declare_ax name ax in
+    add_entry name (Ax ax);
+    state
   | "#IND" :: nparams :: name :: ty :: nctors :: rest ->
     let name = get_name state name in
     line_msg name;
@@ -1314,14 +1298,15 @@ let do_line state l =
     in
     let univs = List.map (get_name state) univs in
     let ind = { params; ty; ctors; univs } in
-    let state = if just_parse () then state else declare_ind state name ind in
-    add_entry state name (Ind ind)
+    let () = if not (just_parse ()) then declare_ind name ind in
+    add_entry name (Ind ind);
+    state
   | [ "#QUOT" ] ->
     line_msg (N.append N.anon "quot");
-    let state, ok =
-      if just_parse () then (state, true) else declare_quot state
-    in
-    if ok then add_entry state quot_name Quot
+    let ok = if just_parse () then true else declare_quot () in
+    if ok then (
+      add_entry quot_name Quot;
+      state)
     else { state with skips = state.skips + 1 }
   | (("#PREFIX" | "#INFIX" | "#POSTFIX") as kind) :: rest ->
     (match rest with
@@ -1440,7 +1425,7 @@ let finish state =
           let l = List.length univs in
           (max m l, cnt + (1 lsl l))
         | Quot -> (max m 1, cnt + 2))
-      state.entries (0, 0)
+      !entries (0, 0)
   in
   let nonarities =
     N.Map.fold
@@ -1448,22 +1433,22 @@ let finish state =
         match entry with
         | Ax _ | Def _ | Quot -> cnt
         | Ind ind -> if is_arity ind.ty then cnt else cnt + 1)
-      state.entries 0
+      !entries 0
   in
   let squashes =
     if not (print_squashes ()) then Pp.mt ()
     else
       N.Map.fold
         (fun n s pp -> Pp.(pp ++ fnl () ++ N.pp n ++ spc () ++ pp_squashy s))
-        state.squash_info
+        !squash_info
         Pp.(mt ())
   in
   Feedback.msg_info
     Pp.(
       fnl () ++ str "Done!" ++ fnl () ++ str "- "
-      ++ int (N.Map.cardinal state.entries)
+      ++ int (N.Map.cardinal !entries)
       ++ str " entries (" ++ int cnt ++ str " possible instances)"
-      ++ (if N.Map.exists (fun _ x -> Quot == x) state.entries then
+      ++ (if N.Map.exists (fun _ x -> Quot == x) !entries then
           str " (including quot)."
          else str ".")
       ++ fnl () ++ str "- "
@@ -1648,8 +1633,6 @@ vo size 1.4GB
 *)
 
 (* TODO: see how mathlib goes after the irrelevance check update and the defheight update
-
-   TODO: cleanup state handling (most of it except uconv.map/levels/graph should probably be summary refs)
 
    use primitive records for record-like types?
    how to translate the projections correctly (for perf)?
