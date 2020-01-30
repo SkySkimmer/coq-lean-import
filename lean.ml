@@ -1128,20 +1128,10 @@ let declare_quot () =
   in
   Feedback.msg_info Pp.(str "quot registered")
 
-let skip_missing_quot =
-  Goptions.declare_bool_option_and_ref ~depr:false
-    ~name:"lean skip missing quotient"
-    ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
-    ~value:true
+exception MissingQuot
 
 let declare_quot () =
-  if Coqlib.has_ref "lean.quot" then (
-    declare_quot ();
-    true)
-  else if skip_missing_quot () then (
-    Feedback.msg_info Pp.(str "Skipping: missing quotient");
-    false)
-  else CErrors.user_err Pp.(str "missing quotient")
+  if Coqlib.has_ref "lean.quot" then declare_quot () else raise MissingQuot
 
 let do_bk = function
   | "#BD" -> NotImplicit
@@ -1225,8 +1215,6 @@ let fix_ctor ind nparams ty =
   let _, ty = pop_params nparams ty in
   replace_ind ind nparams ty
 
-let add_entry n entry = entries := N.Map.add n entry !entries
-
 let as_univ state s = RRange.get state.univs (int_of_string s)
 
 let just_parse =
@@ -1254,6 +1242,16 @@ let declare_ind name ind =
   let () = squashify name ind in
   declare_instances (fun i -> ignore (declare_ind name ind i)) ind.univs
 
+let add_entry n entry =
+  let () =
+    match entry with
+    | Quot -> declare_quot ()
+    | Def def -> declare_def n def
+    | Ax ax -> declare_ax n ax
+    | Ind ind -> declare_ind n ind
+  in
+  entries := N.Map.add n entry !entries
+
 let lcnt = ref 0
 
 let line_msg name =
@@ -1264,7 +1262,7 @@ let do_line state l =
   match
     List.filter (fun s -> s <> "") (String.split_on_char ' ' (String.trim l))
   with
-  | [] -> state (* empty line *)
+  | [] -> (state, None) (* empty line *)
   | "#DEF" :: name :: ty :: body :: univs ->
     let name = get_name state name in
     line_msg name;
@@ -1273,18 +1271,14 @@ let do_line state l =
     and univs = List.map (get_name state) univs in
     let height = height !entries body in
     let def = { ty; body; univs; height } in
-    let () = if not (just_parse ()) then declare_def name def in
-    add_entry name (Def def);
-    state
+    (state, Some (name, Def def))
   | "#AX" :: name :: ty :: univs ->
     let name = get_name state name in
     line_msg name;
     let ty = get_expr state ty
     and univs = List.map (get_name state) univs in
     let ax = { ty; univs } in
-    let () = if not (just_parse ()) then declare_ax name ax in
-    add_entry name (Ax ax);
-    state
+    (state, Some (name, Ax ax))
   | "#IND" :: nparams :: name :: ty :: nctors :: rest ->
     let name = get_name state name in
     line_msg name;
@@ -1298,108 +1292,106 @@ let do_line state l =
     in
     let univs = List.map (get_name state) univs in
     let ind = { params; ty; ctors; univs } in
-    let () = if not (just_parse ()) then declare_ind name ind in
-    add_entry name (Ind ind);
-    state
+    (state, Some (name, Ind ind))
   | [ "#QUOT" ] ->
-    line_msg (N.append N.anon "quot");
-    let ok = if just_parse () then true else declare_quot () in
-    if ok then (
-      add_entry quot_name Quot;
-      state)
-    else { state with skips = state.skips + 1 }
+    line_msg quot_name;
+    (state, Some (quot_name, Quot))
   | (("#PREFIX" | "#INFIX" | "#POSTFIX") as kind) :: rest ->
     (match rest with
     | [ n; level; token ] ->
       let kind = do_notation_kind kind
       and n = get_name state n
       and level = int_of_string level in
-      {
-        state with
-        notations = { kind; head = n; level; token } :: state.notations;
-      }
+      ( {
+          state with
+          notations = { kind; head = n; level; token } :: state.notations;
+        },
+        None )
     | _ ->
       CErrors.user_err
         Pp.(
           str "bad notation: " ++ prlist_with_sep (fun () -> str "; ") str rest))
   | next :: rest ->
     let next = int_of_string next in
-    (match rest with
-    | [ "#NS"; base; cons ] ->
-      assert (next = RRange.length state.names);
-      let base = get_name state base in
-      let cons = N.append base cons in
-      { state with names = RRange.append state.names cons }
-    | [ "#NI"; base; cons ] ->
-      assert (next = RRange.length state.names);
-      (* NI: private name. cons is an int, base is expected to be _private :: stuff
+    let state =
+      match rest with
+      | [ "#NS"; base; cons ] ->
+        assert (next = RRange.length state.names);
+        let base = get_name state base in
+        let cons = N.append base cons in
+        { state with names = RRange.append state.names cons }
+      | [ "#NI"; base; cons ] ->
+        assert (next = RRange.length state.names);
+        (* NI: private name. cons is an int, base is expected to be _private :: stuff
          (true in lean stdlib, dunno elsewhere) *)
-      let base = get_name state base in
-      let n = N.raw_append base cons in
-      { state with names = RRange.append state.names n }
-    | [ "#US"; base ] ->
-      assert (next = RRange.length state.univs);
-      let base = as_univ state base in
-      { state with univs = RRange.append state.univs (Succ base) }
-    | [ "#UM"; a; b ] ->
-      assert (next = RRange.length state.univs);
-      let a = as_univ state a
-      and b = as_univ state b in
-      { state with univs = RRange.append state.univs (Max (a, b)) }
-    | [ "#UIM"; a; b ] ->
-      assert (next = RRange.length state.univs);
-      let a = as_univ state a
-      and b = as_univ state b in
-      { state with univs = RRange.append state.univs (IMax (a, b)) }
-    | [ "#UP"; n ] ->
-      assert (next = RRange.length state.univs);
-      let n = get_name state n in
-      { state with univs = RRange.append state.univs (UNamed n) }
-    | [ "#EV"; n ] ->
-      assert (next = RRange.length state.exprs);
-      let n = int_of_string n in
-      { state with exprs = RRange.append state.exprs (Bound n) }
-    | [ "#ES"; u ] ->
-      assert (next = RRange.length state.exprs);
-      let u = as_univ state u in
-      { state with exprs = RRange.append state.exprs (Sort u) }
-    | "#EC" :: n :: univs ->
-      assert (next = RRange.length state.exprs);
-      let n = get_name state n
-      and univs = List.map (as_univ state) univs in
-      { state with exprs = RRange.append state.exprs (Const (n, univs)) }
-    | [ "#EA"; a; b ] ->
-      assert (next = RRange.length state.exprs);
-      let a = get_expr state a
-      and b = get_expr state b in
-      { state with exprs = RRange.append state.exprs (App (a, b)) }
-    | [ "#EZ"; n; ty; v; rest ] ->
-      assert (next = RRange.length state.exprs);
-      let n = get_name state n
-      and ty = get_expr state ty
-      and v = get_expr state v
-      and rest = get_expr state rest in
-      {
-        state with
-        exprs = RRange.append state.exprs (Let { name = n; ty; v; rest });
-      }
-    | [ "#EL"; bk; n; ty; body ] ->
-      assert (next = RRange.length state.exprs);
-      let bk = do_bk bk
-      and n = get_name state n
-      and ty = get_expr state ty
-      and body = get_expr state body in
-      { state with exprs = RRange.append state.exprs (Lam (bk, n, ty, body)) }
-    | [ "#EP"; bk; n; ty; body ] ->
-      assert (next = RRange.length state.exprs);
-      let bk = do_bk bk
-      and n = get_name state n
-      and ty = get_expr state ty
-      and body = get_expr state body in
-      { state with exprs = RRange.append state.exprs (Pi (bk, n, ty, body)) }
-    | _ ->
-      CErrors.user_err
-        Pp.(str "cannot understand " ++ str l ++ str "." ++ fnl ()))
+        let base = get_name state base in
+        let n = N.raw_append base cons in
+        { state with names = RRange.append state.names n }
+      | [ "#US"; base ] ->
+        assert (next = RRange.length state.univs);
+        let base = as_univ state base in
+        { state with univs = RRange.append state.univs (Succ base) }
+      | [ "#UM"; a; b ] ->
+        assert (next = RRange.length state.univs);
+        let a = as_univ state a
+        and b = as_univ state b in
+        { state with univs = RRange.append state.univs (Max (a, b)) }
+      | [ "#UIM"; a; b ] ->
+        assert (next = RRange.length state.univs);
+        let a = as_univ state a
+        and b = as_univ state b in
+        { state with univs = RRange.append state.univs (IMax (a, b)) }
+      | [ "#UP"; n ] ->
+        assert (next = RRange.length state.univs);
+        let n = get_name state n in
+        { state with univs = RRange.append state.univs (UNamed n) }
+      | [ "#EV"; n ] ->
+        assert (next = RRange.length state.exprs);
+        let n = int_of_string n in
+        { state with exprs = RRange.append state.exprs (Bound n) }
+      | [ "#ES"; u ] ->
+        assert (next = RRange.length state.exprs);
+        let u = as_univ state u in
+        { state with exprs = RRange.append state.exprs (Sort u) }
+      | "#EC" :: n :: univs ->
+        assert (next = RRange.length state.exprs);
+        let n = get_name state n
+        and univs = List.map (as_univ state) univs in
+        { state with exprs = RRange.append state.exprs (Const (n, univs)) }
+      | [ "#EA"; a; b ] ->
+        assert (next = RRange.length state.exprs);
+        let a = get_expr state a
+        and b = get_expr state b in
+        { state with exprs = RRange.append state.exprs (App (a, b)) }
+      | [ "#EZ"; n; ty; v; rest ] ->
+        assert (next = RRange.length state.exprs);
+        let n = get_name state n
+        and ty = get_expr state ty
+        and v = get_expr state v
+        and rest = get_expr state rest in
+        {
+          state with
+          exprs = RRange.append state.exprs (Let { name = n; ty; v; rest });
+        }
+      | [ "#EL"; bk; n; ty; body ] ->
+        assert (next = RRange.length state.exprs);
+        let bk = do_bk bk
+        and n = get_name state n
+        and ty = get_expr state ty
+        and body = get_expr state body in
+        { state with exprs = RRange.append state.exprs (Lam (bk, n, ty, body)) }
+      | [ "#EP"; bk; n; ty; body ] ->
+        assert (next = RRange.length state.exprs);
+        let bk = do_bk bk
+        and n = get_name state n
+        and ty = get_expr state ty
+        and body = get_expr state body in
+        { state with exprs = RRange.append state.exprs (Pi (bk, n, ty, body)) }
+      | _ ->
+        CErrors.user_err
+          Pp.(str "cannot understand " ++ str l ++ str "." ++ fnl ())
+    in
+    (state, None)
 
 let rec is_arity = function
   | Sort _ -> true
@@ -1510,6 +1502,11 @@ let state = Summary.ref ~name:"lean-state" empty_state
 
 let before_from = function None -> false | Some from -> !lcnt < from
 
+let skip_missing_quot =
+  Goptions.declare_bool_option_and_ref ~depr:false
+    ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
+    ~value:true
+
 let rec do_input state ~from ~until ch =
   if until = Some !lcnt then begin
     close_in ch;
@@ -1524,36 +1521,44 @@ let rec do_input state ~from ~until ch =
       if not (until = None) then CErrors.user_err Pp.(str "unexpected EOF!");
       state
     | l ->
-      let st = States.freeze ~marshallable:false in
-      (match if before_from from then state else do_line state l with
-      | state ->
+      let state, oentry = do_line state l in
+      (match (just_parse () || before_from from, oentry) with
+      | true, _ | false, None ->
         incr lcnt;
         do_input state ~from ~until ch
-      | exception e ->
-        let e = CErrors.push e in
-        States.unfreeze st;
-        (* without this unfreeze, the global state.declared and the
-           global env are out of sync *)
-        if skip_errors () then begin
-          Feedback.msg_info
-            Pp.(
-              str "Skipping: error at line "
-              ++ int !lcnt
-              ++ str (": " ^ l)
-              ++ fnl () ++ CErrors.iprint e);
+      | false, Some (n, entry) ->
+        (* freeze is actually pretty costly, so make sure we don't run it for non sideffect lines. *)
+        let st = States.freeze ~marshallable:false in
+        (match add_entry n entry with
+        | () ->
           incr lcnt;
-          do_input { state with skips = state.skips + 1 } ~from ~until ch
-        end
-        else begin
-          close_in ch;
-          finish state;
-          Feedback.msg_info
-            Pp.(
-              str "Error at line " ++ int !lcnt
-              ++ str (": " ^ l)
-              ++ fnl () ++ CErrors.iprint e);
-          state (* TODO have a mode where errors are really errors *)
-        end)
+          do_input state ~from ~until ch
+        | exception e ->
+          let e = CErrors.push e in
+          States.unfreeze st;
+          (* without this unfreeze, the global state.declared and the
+           global env are out of sync *)
+          if (fst e = MissingQuot && skip_missing_quot ()) || skip_errors ()
+          then begin
+            Feedback.msg_info
+              Pp.(
+                str "Skipping: error at line "
+                ++ int !lcnt
+                ++ str (": " ^ l)
+                ++ fnl () ++ CErrors.iprint e);
+            incr lcnt;
+            do_input { state with skips = state.skips + 1 } ~from ~until ch
+          end
+          else begin
+            close_in ch;
+            finish state;
+            Feedback.msg_info
+              Pp.(
+                str "Error at line " ++ int !lcnt
+                ++ str (": " ^ l)
+                ++ fnl () ++ CErrors.iprint e);
+            state (* TODO have a mode where errors are really errors *)
+          end))
 
 let import ~from ~until f =
   lcnt := 1;
