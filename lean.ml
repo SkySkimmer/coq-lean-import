@@ -697,10 +697,13 @@ let univ_entry { map; levels; graph } ounivs =
       let univs = List.rev univs in
       (univs, algs)
   in
-  let kept = LSet.singleton Level.set in
+  let uset = List.fold_left (fun kept l -> LSet.add l kept) LSet.empty univs in
+  let kept = LSet.add Level.set uset in
   let kept = Int.Map.fold (fun _ -> LSet.add) !sets kept in
-  let kept = List.fold_left (fun kept l -> LSet.add l kept) kept univs in
   let csts = UGraph.constraints_for ~kept graph in
+  let csts =
+    Constraint.filter (fun (a, _, b) -> LSet.mem a uset || LSet.mem b uset) csts
+  in
   let unames = Array.of_list (make_unames univs ounivs) in
   let univs = Instance.of_array (Array.of_list univs) in
   let uctx = UContext.make (univs, csts) in
@@ -1647,8 +1650,6 @@ vo size 1.4GB
 (* TODO: see how mathlib goes after the irrelevance check update and the defheight update
 
    TODO: cleanup state handling (most of it except uconv.map/levels/graph should probably be summary refs)
-
-   TODO don't produce polymorphic constraints Set+n < Set+n+1
 
    use primitive records for record-like types?
    how to translate the projections correctly (for perf)?
