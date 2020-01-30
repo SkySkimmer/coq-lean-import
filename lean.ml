@@ -336,12 +336,12 @@ let to_universe map u =
   let u = to_universe map u in
   simplify_universe u
 
-type sets = Level.t Int.Map.t
-(** Map from [n] to the global level standing for [Set+n]. *)
+(** Map from [n] to the global level standing for [Set+n] (not including n=0). *)
+let sets : Level.t Int.Map.t ref =
+  Summary.ref ~name:"lean-set-surrogates" Int.Map.empty
 
 type uconv = {
   map : Level.t N.Map.t;  (** Map from lean names to Coq universes *)
-  sets : sets;
   levels : Level.t Universe.Map.t;
       (** Map from algebraic universes to levels (only levels representing
           an algebraic) *)
@@ -406,7 +406,7 @@ let is_sets u =
 let rec level_of_sets uconv n =
   if n = 0 then (uconv, Level.set)
   else
-    try (uconv, Int.Map.find n uconv.sets)
+    try (uconv, Int.Map.find n !sets)
     with Not_found ->
       let uconv, p = level_of_sets uconv (n - 1) in
       let l =
@@ -415,9 +415,9 @@ let rec level_of_sets uconv n =
       in
       Global.push_context_set ~strict:true
         (LSet.singleton l, Constraint.singleton (p, Lt, l));
-      let sets = Int.Map.add n l uconv.sets in
+      sets := Int.Map.add n l !sets;
       let graph = UGraph.add_universe l ~lbound:p ~strict:false uconv.graph in
-      ({ uconv with sets; graph }, l)
+      ({ uconv with graph }, l)
 
 let to_univ_level u uconv =
   match Universe.level u with
@@ -641,10 +641,9 @@ let univ_of_name u =
     Level.(make (UGlobal.make u 0))
   else UnivGen.fresh_level ()
 
-let start_uconv (state : sets state) univs i =
+let start_uconv (state : unit state) univs i =
   let uconv =
     {
-      sets = state.uconv;
       graph = Global.universes ();
       map = N.Map.empty;
       levels = Universe.Map.empty;
@@ -675,7 +674,7 @@ let rec make_unames univs ounivs =
   | _u :: univs, o :: ounivs -> N.to_name o :: make_unames univs ounivs
   | [], _ :: _ -> assert false
 
-let univ_entry { sets; map; levels; graph } ounivs =
+let univ_entry { map; levels; graph } ounivs =
   let ounivs =
     CList.map_filter
       (fun u ->
@@ -699,7 +698,7 @@ let univ_entry { sets; map; levels; graph } ounivs =
       (univs, algs)
   in
   let kept = LSet.singleton Level.set in
-  let kept = Int.Map.fold (fun _ -> LSet.add) sets kept in
+  let kept = Int.Map.fold (fun _ -> LSet.add) !sets kept in
   let kept = List.fold_left (fun kept l -> LSet.add l kept) kept univs in
   let csts = UGraph.constraints_for ~kept graph in
   let unames = Array.of_list (make_unames univs ounivs) in
@@ -715,7 +714,7 @@ let univ_entry { sets; map; levels; graph } ounivs =
    Preserve algebraics in codomain position? *)
 let finish_uconv state ounivs =
   let univs = univ_entry state.uconv ounivs in
-  ({ state with uconv = state.uconv.sets }, univs)
+  ({ state with uconv = () }, univs)
 
 let name_for_core n i =
   if i = 0 then N.to_id n
@@ -801,8 +800,8 @@ and instantiate n univs state =
   let univs = List.map (to_universe state.uconv.map) univs in
   let i, univs = int_of_univs univs in
   let uconv = state.uconv in
-  let (state : sets state), inst =
-    ensure_exists { state with uconv = state.uconv.sets } n i
+  let (state : unit state), inst =
+    ensure_exists { state with uconv = () } n i
   in
   let subst l =
     match Level.var_index l with
@@ -815,7 +814,6 @@ and instantiate n univs state =
       inst.algs
   in
   let univs = List.concat [ univs; extra ] in
-  let uconv = { uconv with sets = state.uconv } in
   let uconv, univs =
     CList.fold_left_map (fun state u -> to_univ_level u state) uconv univs
   in
@@ -1038,9 +1036,7 @@ let squashify state n { params; ty; ctors; univs } =
   in
   let stateP, paramsP = to_params stateP params in
   let stateP, tyP = to_constr ty stateP in
-  let state =
-    { state with declared = stateP.declared; uconv = stateP.uconv.sets }
-  in
+  let state = { state with declared = stateP.declared } in
   let envP =
     Environ.push_rel_context paramsP
       (Environ.set_universes (Global.env ()) stateP.uconv.graph)
@@ -1059,10 +1055,10 @@ let squashify state n { params; ty; ctors; univs } =
     let always_prop = Sorts.is_sprop sortT in
     match ctors with
     | [] ->
-      ( { state with declared = stateT.declared; uconv = stateT.uconv.sets },
+      ( { state with declared = stateT.declared },
         { maybe_prop = true; always_prop; lean_squashes = false } )
     | _ :: _ :: _ ->
-      ( { state with declared = stateT.declared; uconv = stateT.uconv.sets },
+      ( { state with declared = stateT.declared },
         { maybe_prop = true; always_prop; lean_squashes = true } )
     | [ (_, ctor) ] ->
       let stateT, ctorT = to_constr ctor stateT in
@@ -1110,7 +1106,7 @@ let squashify state n { params; ty; ctors; univs } =
           args ~init:(false, 0, envT)
       in
       (* TODO translate to use non recursively uniform params (fix extraction)*)
-      ( { state with declared = stateT.declared; uconv = stateT.uconv.sets },
+      ( { state with declared = stateT.declared },
         { maybe_prop = true; always_prop; lean_squashes } )
 
 let squashify state n ind =
@@ -1164,7 +1160,7 @@ let empty_state =
     names = RRange.singleton N.anon;
     exprs = RRange.empty;
     univs = RRange.singleton U.Prop;
-    uconv = Int.Map.empty;
+    uconv = ();
     skips = 0;
     entries = N.Map.empty;
     squash_info = N.Map.empty;
