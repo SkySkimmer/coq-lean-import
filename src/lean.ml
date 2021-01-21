@@ -16,11 +16,16 @@ let __ () = assert false
 
 let invalid = Constr.(mkApp (mkSet, [| mkSet |]))
 
-let quickdef ~name entry impls =
-  let scope = DeclareDef.Global Declare.ImportDefaultBehavior in
+let add_universe l ~lbound g =
+  let g = UGraph.add_universe l ~lbound:Set ~strict:false g in
+  UGraph.enforce_constraint (lbound, Le, l) g
+
+let quickdef ~name ~types ~univs body =
+  let entry = Declare.definition_entry ?types ~univs body in
+  let scope = Locality.(Global ImportDefaultBehavior) in
   let kind = Decls.(IsDefinition Definition) in
-  DeclareDef.declare_definition ~scope ~name ~kind UnivNames.empty_binders entry
-    impls
+  let uctx = UState.empty (* used for ubinders and hook *) in
+  Declare.declare_entry ~name ~scope ~kind ~impargs:[] ~uctx entry
 
 (** produce [args, recargs] inside mixed context [args/recargs]
     [info] is in reverse order, ie the head is about the last arg in application order
@@ -139,10 +144,10 @@ let lean_scheme env ~dep mind u s =
   else
     (* body := fun params P (fc : forall args/recargs, P (C args)) => ...
 
-     becomes
+       becomes
 
-     fun params P (fc : forall args, forall recargs, P (C args)) =>
-     body params P (fun args/recargs, fc args recargs)
+       fun params P (fc : forall args, forall recargs, P (C args)) =>
+       body params P (fun args/recargs, fc args recargs)
     *)
     let open Constr in
     let nlc = Array.length recinfo in
@@ -195,7 +200,7 @@ let with_unsafe_univs f () =
     Global.set_typing_flags flags;
     v
   with e ->
-    let e = CErrors.push e in
+    let e = Exninfo.capture e in
     Global.set_typing_flags flags;
     Exninfo.iraise e
 
@@ -416,7 +421,7 @@ let rec level_of_sets uconv n =
       Global.push_context_set ~strict:true
         (LSet.singleton l, Constraint.singleton (p, Lt, l));
       sets := Int.Map.add n l !sets;
-      let graph = UGraph.add_universe l ~lbound:p ~strict:false uconv.graph in
+      let graph = add_universe l ~lbound:p uconv.graph in
       ({ uconv with graph }, l)
 
 let to_univ_level u uconv =
@@ -431,9 +436,7 @@ let to_univ_level u uconv =
       | None ->
         let uconv, mset = level_of_sets uconv (max_increment u) in
         let l = level_of_universe u in
-        let graph =
-          UGraph.add_universe l ~lbound:mset ~strict:false uconv.graph
-        in
+        let graph = add_universe l ~lbound:mset uconv.graph in
         let graph =
           Universe.Map.fold
             (fun u' l' graph -> update_graph (l, u) (l', u') graph)
@@ -585,7 +588,7 @@ let pp_squashy { maybe_prop; always_prop; lean_squashes } =
 
 let coq_squashes graph (entry : Entries.mutual_inductive_entry) =
   let env = Global.env () in
-  let env = Environ.set_universes env graph in
+  let env = Environ.set_universes graph env in
   let ind =
     match entry.mind_entry_inds with [ ind ] -> ind | _ -> assert false
   in
@@ -640,8 +643,7 @@ let start_uconv univs i =
       let map, graph =
         if i mod 2 = 0 then
           let v = univ_of_name u in
-          ( N.Map.add u v uconv.map,
-            UGraph.add_universe v ~lbound:set1 ~strict:false uconv.graph )
+          (N.Map.add u v uconv.map, add_universe v ~lbound:set1 uconv.graph)
         else (N.Map.add u Level.sprop uconv.map, uconv.graph)
       in
       aux { uconv with map; graph } (i / 2) univs
@@ -831,8 +833,7 @@ and declare_def n { ty; body; univs; height } i =
   let uconv, ty = to_constr ty uconv in
   let uconv, body = to_constr body uconv in
   let univs, algs = univ_entry uconv univs in
-  let entry = Declare.definition_entry ~opaque:false ~types:ty ~univs body in
-  let ref = quickdef ~name:(name_for n i) entry [] in
+  let ref = quickdef ~name:(name_for n i) ~types:(Some ty) ~univs body in
   let () =
     let c = match ref with ConstRef c -> c | _ -> assert false in
     Global.set_strategy (ConstKey c) (Level (-height))
@@ -908,19 +909,19 @@ and declare_ind n { params; ty; ctors; univs } i =
           Entries.mind_entry_params = params;
           mind_entry_record = None;
           mind_entry_finite = Finite;
+          mind_entry_template = false;
           mind_entry_inds =
             [
               {
                 mind_entry_typename = ind_name;
                 mind_entry_arity = ty;
-                mind_entry_template = false;
                 mind_entry_consnames = List.map (fun n -> name_for n i) cnames;
                 mind_entry_lc = ctys;
               };
             ];
           mind_entry_private = None;
           mind_entry_universes = univs;
-          mind_entry_cumulative = false;
+          mind_entry_variance = None;
         }
       in
       let squashy = N.Map.get n !squash_info in
@@ -994,9 +995,7 @@ and declare_ind n { params; ty; ctors; univs } i =
         let id = Id.of_string (Id.to_string ind_name ^ suffix) in
         let body, uentry = make_scheme sort in
         let elim =
-          quickdef ~name:id
-            (Declare.definition_entry ~opaque:false ~univs:uentry body)
-            []
+          quickdef ~name:id ~types:None ~univs:uentry body
           (* TODO implicits? *)
         in
         (* TODO AFAICT Lean reduces recursors eagerly, but ofc only when applied to a ctor
@@ -1031,7 +1030,7 @@ let squashify n { params; ty; ctors; univs } =
   let uconvP, tyP = to_constr ty uconvP in
   let envP =
     Environ.push_rel_context paramsP
-      (Environ.set_universes (Global.env ()) uconvP.graph)
+      (Environ.set_universes uconvP.graph (Global.env ()))
   in
   let _, sortP = Reduction.dest_arity envP tyP in
   if not (Sorts.is_sprop sortP) then noprop
@@ -1041,7 +1040,7 @@ let squashify n { params; ty; ctors; univs } =
     let uconvT, tyT = to_constr ty uconvT in
     let envT =
       Environ.push_rel_context paramsT
-        (Environ.set_universes (Global.env ()) uconvT.graph)
+        (Environ.set_universes uconvT.graph (Global.env ()))
     in
     let _, sortT = Reduction.dest_arity envT tyT in
     let always_prop = Sorts.is_sprop sortT in
@@ -1057,7 +1056,7 @@ let squashify n { params; ty; ctors; univs } =
                 ( Context.make_annot (N.to_name n)
                     (Sorts.relevance_of_sort sortT),
                   Term.it_mkProd_or_LetIn tyT paramsT ))
-             (Environ.set_universes (Global.env ()) uconvT.graph))
+             (Environ.set_universes uconvT.graph (Global.env ())))
       in
       let args, out = Reduction.dest_prod envT ctorT in
       let forced =
@@ -1323,7 +1322,7 @@ let do_line state l =
       | [ "#NI"; base; cons ] ->
         assert (next = RRange.length state.names);
         (* NI: private name. cons is an int, base is expected to be _private :: stuff
-         (true in lean stdlib, dunno elsewhere) *)
+           (true in lean stdlib, dunno elsewhere) *)
         let base = get_name state base in
         let n = N.raw_append base cons in
         { state with names = RRange.append state.names n }
@@ -1482,7 +1481,10 @@ exception TimedOut
 let do_line state l =
   match !timeout with
   | None -> do_line state l
-  | Some t -> Control.timeout t (fun () -> do_line state l) () TimedOut
+  | Some t ->
+    (match Control.timeout (float_of_int t) (fun () -> do_line state l) () with
+    | Some v -> v
+    | None -> raise TimedOut)
 
 let do_line state l =
   let t0 = System.get_time () in
@@ -1492,7 +1494,7 @@ let do_line state l =
     prtime t0 t1;
     state
   | exception e ->
-    let e = CErrors.push e in
+    let e = Exninfo.capture e in
     (if fst e <> TimedOut then
      let t1 = System.get_time () in
      prtime t0 t1);
@@ -1506,6 +1508,12 @@ let skip_missing_quot =
   Goptions.declare_bool_option_and_ref ~depr:false
     ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
     ~value:true
+
+let freeze () = (Lib.freeze (), Summary.freeze_summaries ~marshallable:false)
+
+let unfreeze (lib, sum) =
+  Lib.unfreeze lib;
+  Summary.unfreeze_summaries sum
 
 let rec do_input state ~from ~until ch =
   if until = Some !lcnt then begin
@@ -1528,16 +1536,16 @@ let rec do_input state ~from ~until ch =
         do_input state ~from ~until ch
       | false, Some (n, entry) ->
         (* freeze is actually pretty costly, so make sure we don't run it for non sideffect lines. *)
-        let st = States.freeze ~marshallable:false in
+        let st = freeze () in
         (match add_entry n entry with
         | () ->
           incr lcnt;
           do_input state ~from ~until ch
         | exception e ->
-          let e = CErrors.push e in
-          States.unfreeze st;
+          let e = Exninfo.capture e in
+          unfreeze st;
           (* without this unfreeze, the global state.declared and the
-           global env are out of sync *)
+             global env are out of sync *)
           if (fst e = MissingQuot && skip_missing_quot ()) || skip_errors ()
           then begin
             Feedback.msg_info
