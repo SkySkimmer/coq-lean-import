@@ -1,0 +1,11 @@
+Makefile.coq*
+
+src/g_lean.ml
+
+*.a
+*.aux
+*.cm*
+*.d
+*.glob
+*.o
+*.vo*

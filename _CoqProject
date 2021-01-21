@@ -1,0 +1,7 @@
+-Q src LeanImport
+
+src/Lean.v
+src/g_lean.mlg
+src/lean.ml
+src/lean.mli
+src/lean_import.mlpack
