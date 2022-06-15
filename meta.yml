@@ -1,0 +1,42 @@
+---
+fullname: Lean Importer
+shortname: lean-import
+organization: SkySkimmer
+community: false
+action: true
+plugin: true
+branch: master
+coqdoc: false
+
+synopsis: Plugin allowing Coq to import Lean exported files.
+
+description: Plugin allowing Coq to import Lean exported files.
+
+authors:
+- name: Gaëtan Gilbert
+  initial: true
+
+maintainers:
+- name: Gaëtan Gilbert
+  nickname: SkySkimmer
+
+opam-file-maintainer: gaetan.gilbert@skyskimmer.net
+
+opam-file-version: dev
+
+license:
+  fullname: GNU Lesser General Public License v2.1
+  identifier: LGPL-2.1-only
+
+supported_coq_versions:
+  text: master (use the corresponding branch or release for other Coq versions)
+  opam: '{= "dev"}'
+
+supported_ocaml_versions:
+    text: 4.09.0 or later
+    opam: '{>= "4.09.0"}'
+
+tested_coq_opam_versions:
+- version: dev
+
+namespace: LeanImport

@@ -1,0 +1,29 @@
+# This file was generated from `meta.yml`, please do not edit manually.
+# Follow the instructions on https://github.com/coq-community/templates to regenerate.
+
+opam-version: "2.0"
+maintainer: "gaetan.gilbert@skyskimmer.net"
+version: "dev"
+
+homepage: "https://github.com/SkySkimmer/lean-import"
+dev-repo: "git+https://github.com/SkySkimmer/lean-import.git"
+bug-reports: "https://github.com/SkySkimmer/lean-import/issues"
+license: "LGPL-2.1-only"
+
+synopsis: "Plugin allowing Coq to import Lean exported files."
+description: """
+Plugin allowing Coq to import Lean exported files."""
+
+build: [make "-j%{jobs}%"]
+install: [make "install"]
+depends: [
+  "ocaml" {>= "4.09.0"}
+  "coq" {= "dev"}
+]
+
+tags: [
+  "logpath:LeanImport"
+]
+authors: [
+  "Gaëtan Gilbert"
+]
