@@ -2,7 +2,7 @@ MAKE_OPTS:= --no-builtin-rules
 
 .PHONY: submake
 submake: Makefile.coq
-	$(MAKE) $(MAKE_OPTS) -f Makefile.coq $(filter-out test%, $(MAKECMDGOALS))
+	$(MAKE) $(MAKE_OPTS) -f Makefile.coq $(MAKECMDGOALS)
 
 Makefile.coq: _CoqProject
 	$(COQBIN)coq_makefile -f $< -o $@
