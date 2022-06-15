@@ -1572,7 +1572,7 @@ let do_line state l =
      prtime t0 t1);
     Exninfo.iraise e
 
-let state = Summary.ref ~name:"lean-state" empty_state
+
 
 let before_from = function None -> false | Some from -> !lcnt < from
 
@@ -1639,8 +1639,7 @@ let rec do_input state ~from ~until ch =
 let import ~from ~until f =
   lcnt := 1;
   (* silence the definition messages from Coq *)
-  state :=
-    Flags.silently (fun () -> do_input !state ~from ~until (open_in f)) ()
+  ignore (Flags.silently (fun () -> do_input empty_state ~from ~until (open_in f)) ())
 
 (* Lean stdlib:
 - 10244 entries (24065 possible instances)
