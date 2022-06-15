@@ -1,0 +1,6 @@
+-Q ../src LeanImport
+-I ../src
+
+-R . Test
+
+core.v
