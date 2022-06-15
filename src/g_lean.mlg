@@ -8,7 +8,7 @@
 (*         *     (see LICENSE file for the text of the license)         *)
 (************************************************************************)
 
-DECLARE PLUGIN "lean_import_plugin"
+DECLARE PLUGIN "coq-lean-import.plugin"
 
 {
 open Stdarg

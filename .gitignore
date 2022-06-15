@@ -9,3 +9,5 @@ src/g_lean.ml
 *.glob
 *.o
 *.vo*
+.merlin
+META*

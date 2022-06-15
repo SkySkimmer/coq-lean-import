@@ -1,8 +1,12 @@
+Declare ML Module "coq-lean-import.plugin".
+
 Set Universe Polymorphism.
 Set Printing Universes.
 
 Declare Scope lean_scope.
 Global Open Scope lean_scope.
+
+#[export] Set Definitional UIP.
 
 Inductive eq@{u|} {α:Type@{u}} (a:α) : α -> SProp
   := eq_refl : eq a a.

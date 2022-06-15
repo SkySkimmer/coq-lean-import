@@ -1,4 +1,6 @@
+-generate-meta-for-package coq-lean-import
 -Q src LeanImport
+-I src
 
 src/Lean.v
 src/g_lean.mlg
