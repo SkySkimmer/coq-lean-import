@@ -1448,10 +1448,36 @@ let print_squashes =
     ~key:[ "Lean"; "Print"; "Squash"; "Info" ]
     ~value:false
 
-let skip_errors =
+let skip_missing_quot =
   Goptions.declare_bool_option_and_ref ~depr:false
-    ~key:[ "Lean"; "Skip"; "Errors" ]
-    ~value:false
+    ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
+    ~value:true
+
+type error_mode =
+  | Skip
+  | Stop
+  | Fail
+
+let error_mode =
+  let print = function
+    | Skip -> "Skip"
+    | Stop -> "Stop"
+    | Fail -> "Fail"
+  in
+  let interp = function
+    | "Skip" -> Skip
+    | "Stop" -> Stop
+    | "Fail" -> Fail
+    | s -> CErrors.user_err Pp.(str "Unknown error mode " ++ qstring s ++ str ".")
+  in
+  Goptions.declare_interpreted_string_option_and_ref ~depr:false
+    ~key:["Lean";"Error";"Mode"]
+    ~value:Fail
+    interp print
+
+let error_mode = function
+  | MissingQuot when skip_missing_quot () -> Skip
+  | _ -> error_mode ()
 
 let finish state =
   let max_univs, cnt =
@@ -1482,7 +1508,7 @@ let finish state =
   in
   Feedback.msg_info
     Pp.(
-      fnl () ++ str "Done!" ++ fnl () ++ str "- "
+      fnl () ++ fnl () ++ str "Done!" ++ fnl () ++ str "- "
       ++ int (N.Map.cardinal !entries)
       ++ str " entries (" ++ int cnt ++ str " possible instances)"
       ++ (if N.Map.exists (fun _ x -> Quot == x) !entries then
@@ -1550,11 +1576,6 @@ let state = Summary.ref ~name:"lean-state" empty_state
 
 let before_from = function None -> false | Some from -> !lcnt < from
 
-let skip_missing_quot =
-  Goptions.declare_bool_option_and_ref ~depr:false
-    ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
-    ~value:true
-
 let freeze () = (Lib.freeze (), Summary.freeze_summaries ~marshallable:false)
 
 let unfreeze (lib, sum) =
@@ -1592,8 +1613,8 @@ let rec do_input state ~from ~until ch =
           unfreeze st;
           (* without this unfreeze, the global state.declared and the
              global env are out of sync *)
-          if (fst e = MissingQuot && skip_missing_quot ()) || skip_errors ()
-          then begin
+          match error_mode (fst e) with
+          | Skip ->
             Feedback.msg_info
               Pp.(
                 str "Skipping: error at line "
@@ -1602,8 +1623,7 @@ let rec do_input state ~from ~until ch =
                 ++ fnl () ++ CErrors.iprint e);
             incr lcnt;
             do_input { state with skips = state.skips + 1 } ~from ~until ch
-          end
-          else begin
+          | Stop ->
             close_in ch;
             finish state;
             Feedback.msg_info
@@ -1611,8 +1631,15 @@ let rec do_input state ~from ~until ch =
                 str "Error at line " ++ int !lcnt
                 ++ str (": " ^ l)
                 ++ fnl () ++ CErrors.iprint e);
-            state (* TODO have a mode where errors are really errors *)
-          end))
+            state
+          | Fail ->
+            close_in ch;
+            finish state;
+            CErrors.user_err
+              Pp.(
+                str "Error at line " ++ int !lcnt
+                ++ str (": " ^ l)
+                ++ fnl () ++ CErrors.iprint e)))
 
 let import ~from ~until f =
   lcnt := 1;
