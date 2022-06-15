@@ -1613,33 +1613,28 @@ let rec do_input state ~from ~until ch =
           unfreeze st;
           (* without this unfreeze, the global state.declared and the
              global env are out of sync *)
+          let epp =
+              Pp.(str "Error at line " ++ int !lcnt
+                  ++ str " (for " ++ N.pp n ++ str ")"
+                  ++ str (": " ^ l)
+                  ++ fnl () ++ CErrors.iprint e)
+          in
           match error_mode (fst e) with
           | Skip ->
             Feedback.msg_info
               Pp.(
-                str "Skipping: error at line "
-                ++ int !lcnt
-                ++ str (": " ^ l)
-                ++ fnl () ++ CErrors.iprint e);
+                str "Skipping: " ++ epp);
             incr lcnt;
             do_input { state with skips = state.skips + 1 } ~from ~until ch
           | Stop ->
             close_in ch;
             finish state;
-            Feedback.msg_info
-              Pp.(
-                str "Error at line " ++ int !lcnt
-                ++ str (": " ^ l)
-                ++ fnl () ++ CErrors.iprint e);
+            Feedback.msg_info epp;
             state
           | Fail ->
             close_in ch;
             finish state;
-            CErrors.user_err
-              Pp.(
-                str "Error at line " ++ int !lcnt
-                ++ str (": " ^ l)
-                ++ fnl () ++ CErrors.iprint e)))
+            CErrors.user_err epp))
 
 let import ~from ~until f =
   lcnt := 1;
