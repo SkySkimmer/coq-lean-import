@@ -863,20 +863,25 @@ and ensure_exists n i =
   with Not_found ->
     (* TODO can we end up asking for a ctor or eliminator before
        asking for the inductive type? *)
-    if i = 0 then CErrors.anomaly Pp.(N.pp n ++ str " was not instantiated!");
+    if i = 0 then CErrors.user_err Pp.(N.pp n ++ str " was not instantiated!");
     assert (not (upfront_instances ()));
     (match N.Map.get n !entries with
     | Def def -> declare_def n def i
     | Ax ax -> declare_ax n ax i
     | Ind ind -> declare_ind n ind i
-    | Quot -> CErrors.anomaly Pp.(str "quot must be predeclared"))
+    | Quot -> CErrors.user_err Pp.(str "quot must be predeclared"))
 
 and declare_def n { ty; body; univs; height } i =
   let uconv = start_uconv univs i in
   let uconv, ty = to_constr ty uconv in
   let uconv, body = to_constr body uconv in
   let univs, algs = univ_entry uconv univs in
-  let ref = quickdef ~name:(name_for n i) ~types:(Some ty) ~univs body in
+  let ref = try quickdef ~name:(name_for n i) ~types:(Some ty) ~univs body
+    with e ->
+      let e = Exninfo.capture e in
+      Feedback.msg_info Pp.(str "Failed with" ++ fnl() ++ Printer.pr_constr_env (Global.env()) (Evd.from_env (Global.env())) body ++ fnl() ++ str ": " ++ Printer.pr_constr_env (Global.env()) (Evd.from_env (Global.env())) ty);
+      Exninfo.iraise e
+  in
   let () =
     let c = match ref with ConstRef c -> c | _ -> assert false in
     Global.set_strategy (ConstKey c) (Level (-height))
@@ -1610,15 +1615,15 @@ let rec do_input state ~from ~until ch =
           do_input state ~from ~until ch
         | exception e ->
           let e = Exninfo.capture e in
-          unfreeze st;
-          (* without this unfreeze, the global state.declared and the
-             global env are out of sync *)
           let epp =
               Pp.(str "Error at line " ++ int !lcnt
                   ++ str " (for " ++ N.pp n ++ str ")"
                   ++ str (": " ^ l)
                   ++ fnl () ++ CErrors.iprint e)
           in
+          unfreeze st;
+          (* without this unfreeze, the global state.declared and the
+             global env are out of sync *)
           match error_mode (fst e) with
           | Skip ->
             Feedback.msg_info
