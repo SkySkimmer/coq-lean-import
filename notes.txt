@@ -1,0 +1,78 @@
+(* Lean stdlib:
+- 10244 entries (24065 possible instances)
+- 274 universe expressions
+- 28 named universes
+- 14091 names
+- 562009 expression nodes
+
+Max universe instance length 4.
+0 inductives have non syntactically arity types.
+
+export: 46s, 450KB ram(?)
+leanchecker: 8s, 80KB ram(?)
+
+unset conv check: 43s, 723296 maxresident (from time dune exec)
+vo size 53MB
+
+Now passes!
+With 10s timeout, set upfront instances and set conv check:
+284s, 1284096KB (1.3GB) RAM
+vo size 116MB
+coqchk: 540s, 1105372KB (1.1GB) RAM
+the vast majority of that time is spent in Validate.validate, with validation off we get
+51s, 723160KB (720MB) RAM
+If we use Marshal instead of Analyze.instantiate it takes 45s and 380676KB (380MB) RAM
+
+Axioms: real stuff, quot_sound(_inst1), classical_choice(_inst1), propext, io monad stuff
+
+450 inductives and constants rely on type-in-type (this includes the autodeclared eliminators,
+TODO fix that)
+without eliminators: 90 inductives, 42 if we don't count instances separately
+After a quick look it seems acc would be the only one if we translated to
+primitive records when possible
+*)
+
+(* init.out
+- 8642 entries (21020 possible instances) (including quot).
+- 245 universe expressions
+- 11601 names
+- 395540 expression nodes
+Max universe instance length 4.
+0 inductives have non syntactically arity types.
+*)
+
+(* mathlib:
+- 66400 entries (275215 possible instances)
+- 2707 universe expressions
+- 87141 names
+- 8013226 expression nodes
+
+Max universe instance length 10.
+0 inductives have non syntactically arity types.
+
+NB: mathlib travis checker job says "checked 68170 declarations",
+I think it counts recursors separately from the inductive
++ maybe the quotient stuff
+
+export: takes a while and eats lots of ram
+leanchecker: 6min, 1GB ram (pretty stable ram usage)
+
+Coq takes 690KB ram in just parsing mode
+
+unset conv check (old): takes lots of ram after filter_mem_inf_sets_of_right
+(killed at around 4GB)
+
+with per line timeout 10s, skip errors and unset conv check:
+11867 skips (first one is real.linear_order._proof_5)
+1:13:54 total time, 10,305,864 maxresident
+vo size 1.4GB
+
+*)
+
+(* TODO: see how mathlib goes after the irrelevance check update and the defheight update
+
+   use primitive records for record-like types?
+   how to translate the projections correctly (for perf)?
+
+   use primitive records for subsingletons when possible (less types use type-in-type)
+ *)
