@@ -782,8 +782,6 @@ let entries : entry N.Map.t ref = Summary.ref ~name:"lean-entries" N.Map.empty
 let squash_info : squashy N.Map.t ref =
   Summary.ref ~name:"lean-squash-info" N.Map.empty
 
-(* TODO [declared] should have a libobject (maybe along with entries/squash info) *)
-
 let add_declared n i inst =
   declared :=
     N.Map.update n
@@ -1609,9 +1607,12 @@ let rec do_input state ~from ~until ch =
       finish state;
       if not (until = None) then CErrors.user_err Pp.(str "unexpected EOF!");
       state
+    | _ when before_from from ->
+      incr lcnt;
+      do_input state ~from ~until ch
     | l ->
       let state, oentry = do_line state l in
-      (match (just_parse () || before_from from, oentry) with
+      (match (just_parse (), oentry) with
       | true, _ | false, None ->
         incr lcnt;
         do_input state ~from ~until ch
@@ -1650,7 +1651,27 @@ let rec do_input state ~from ~until ch =
             finish state;
             CErrors.user_err epp))
 
+let pstate = Summary.ref ~name:"lean-parse-state" empty_state
+
+let lean_obj =
+  let cache (pstatev,setsv,declaredv,entriesv,squash_infov) =
+    pstate := pstatev;
+    sets := setsv;
+    declared := declaredv;
+    entries := entriesv;
+    squash_info := squash_infov;
+    ()
+  in
+  let open Libobject in
+  declare_object {
+    (default_object "LEAN-IMPORT-STATE") with
+    cache_function = cache;
+    load_function = (fun _ v -> cache v);
+    classify_function = (fun _ -> Keep);
+  }
+
 let import ~from ~until f =
   lcnt := 1;
   (* silence the definition messages from Coq *)
-  ignore (Flags.silently (fun () -> do_input empty_state ~from ~until (open_in f)) ())
+  let pstatev = (Flags.silently (fun () -> do_input !pstate ~from ~until (open_in f)) ()) in
+  Lib.add_leaf (lean_obj (pstatev, !sets, !declared, !entries, !squash_info))
