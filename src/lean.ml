@@ -279,7 +279,7 @@ end = struct
 
   let of_list x = x
 
-  let append a b = if a = [] then [ b ] else b :: a
+  let append a b = b :: a
 
   let raw_append a b = match a with [] -> [ b ] | hd :: tl -> (hd ^ b) :: tl
 
@@ -1200,7 +1200,7 @@ let do_notation_kind = function
   | "#POSTFIX" -> Postfix
   | k -> assert false
 
-type state = {
+type parsing_state = {
   names : N.t RRange.t;
   exprs : expr RRange.t;
   univs : U.t RRange.t;
