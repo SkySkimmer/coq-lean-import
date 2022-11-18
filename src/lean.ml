@@ -197,9 +197,10 @@ let lean_scheme env ~dep mind u s =
     in
     let fcs = List.rev fcs in
     let body =
+      let open CClosure in
       let env = Environ.push_rel_context paramsP env in
       let env = Environ.push_rel_context fcs env in
-      Reduction.nf_betaiota env body
+      norm_val (create_clos_infos betaiota env) (create_tab ()) (inject body)
     in
     Term.it_mkLambda_or_LetIn (Term.it_mkLambda_or_LetIn body fcs) paramsP
 
