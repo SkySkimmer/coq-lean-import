@@ -1137,7 +1137,7 @@ let squashify n { params; ty; ctors; univs } =
                   false
                 else
                   not
-                    (Sorts.is_sprop
+                    (EConstr.ESorts.is_sprop sigma
                        (Retyping.get_sort_of envT sigma (EConstr.of_constr t)))
             in
 
