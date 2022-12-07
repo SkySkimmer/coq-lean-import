@@ -319,7 +319,7 @@ let univ_of_sort = function
   | Sorts.SProp -> None
   | Prop -> assert false
   | Set -> Some Universe.type0
-  | Type u -> Some u
+  | Type u | QSort (_, u) -> Some u
 
 let sort_max (s1:Sorts.t) (s2:Sorts.t) = match s1, s2 with
 | (SProp, SProp) | (Prop, Prop) | (Set, Set) -> s1
@@ -327,6 +327,7 @@ let sort_max (s1:Sorts.t) (s2:Sorts.t) = match s1, s2 with
 | (Prop, (Set | Type _ as s)) | ((Set | Type _) as s, Prop) -> s
 | (Set, Type u) | (Type u, Set) -> Sorts.sort_of_univ (Univ.Universe.sup Univ.Universe.type0 u)
 | (Type u, Type v) -> Sorts.sort_of_univ (Univ.Universe.sup u v)
+| (QSort _, _) | (_, QSort _) -> assert false
 
 
 (** [map] goes from lean names to universes (in practice either SProp or a named level) *)
@@ -794,7 +795,7 @@ let add_declared n i inst =
 let to_univ_level' u uconv =
   match to_universe uconv.map u with
   | SProp -> uconv, LSProp
-  | Type u ->
+  | Type u | QSort (_, u) ->
     let uconv, u = to_univ_level u uconv in
     uconv, Level u
   | Set -> uconv, Level Level.set
