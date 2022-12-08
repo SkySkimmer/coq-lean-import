@@ -391,6 +391,7 @@ let lean_id = Id.of_string "Lean"
 
 let lean_fancy_univs =
   Goptions.declare_bool_option_and_ref ~depr:false
+    ~stage:Interp
     ~key:[ "Lean"; "Fancy"; "Universes" ]
     ~value:true
 
@@ -806,6 +807,7 @@ let to_univ_level' u uconv =
 *)
 let upfront_instances =
   Goptions.declare_bool_option_and_ref ~depr:false
+    ~stage:Interp
     ~key:[ "Lean"; "Upfront"; "Instantiation" ]
     ~value:false
 
@@ -1270,6 +1272,7 @@ let as_univ state s = RRange.get state.univs (int_of_string s)
 
 let just_parse =
   Goptions.declare_bool_option_and_ref ~depr:false
+    ~stage:Interp
     ~key:[ "Lean"; "Just"; "Parsing" ]
     ~value:false
 
@@ -1451,11 +1454,13 @@ let rec is_arity = function
 
 let print_squashes =
   Goptions.declare_bool_option_and_ref ~depr:false
+    ~stage:Interp
     ~key:[ "Lean"; "Print"; "Squash"; "Info" ]
     ~value:false
 
 let skip_missing_quot =
   Goptions.declare_bool_option_and_ref ~depr:false
+    ~stage:Interp
     ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
     ~value:true
 
@@ -1477,6 +1482,7 @@ let error_mode =
     | s -> CErrors.user_err Pp.(str "Unknown error mode " ++ qstring s ++ str ".")
   in
   Goptions.declare_interpreted_string_option_and_ref ~depr:false
+    ~stage:Interp
     ~key:["Lean";"Error";"Mode"]
     ~value:Fail
     interp print
@@ -1549,6 +1555,7 @@ let () =
   Goptions.declare_int_option
     {
       optdepr = false;
+      optstage = Interp;
       optkey = [ "Lean"; "Line"; "Timeout" ];
       optread = (fun () -> !timeout);
       optwrite = (fun x -> timeout := x);
