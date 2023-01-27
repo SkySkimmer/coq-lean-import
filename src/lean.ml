@@ -162,8 +162,8 @@ let lean_scheme env ~dep mind u s =
     *)
     let open Constr in
     let nlc = Array.length recinfo in
-    let paramsP, inside = Term.decompose_lam_n_assum (nparams + 1) body in
-    let fcs, inside = Term.decompose_lam_n nlc inside in
+    let paramsP, inside = Term.decompose_lambda_n_assum (nparams + 1) body in
+    let fcs, inside = Term.decompose_lambda_n nlc inside in
     let fcs = List.rev fcs in
 
     let body =
@@ -1100,7 +1100,7 @@ let squashify n { params; ty; ctors; univs } =
                   Term.it_mkProd_or_LetIn tyT paramsT ))
              (Environ.set_universes uconvT.graph (Global.env ())))
       in
-      let args, out = Reduction.dest_prod envT ctorT in
+      let args, out = Reduction.hnf_decompose_prod envT ctorT in
       let forced =
         (* NB dest_prod returns [out] in whnf *)
         let _, outargs = Constr.decompose_appvect out in
