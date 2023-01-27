@@ -640,7 +640,7 @@ let coq_squashes graph (entry : Entries.mutual_inductive_entry) =
     | [ c ] -> (match Constr.kind c with Rel _ | App _ -> false | _ -> true)
 
 (** the kernel will deal with the relevance annot *)
-let to_annot n = Context.annotR (N.to_name n)
+let to_annot n t uconv = Context.annotR (N.to_name n)
 
 (* bit n of [int_of_univs univs] is 1 iff [List.nth univs n] is SProp *)
 let int_of_univs =
@@ -806,6 +806,7 @@ let rec to_constr =
     f x uconv
   in
   let ret x uconv = (uconv, x) in
+  let to_annot n t u = u, to_annot n t u in
   function
   | Bound i -> ret (mkRel (i + 1))
   | Sort univ ->
@@ -817,14 +818,17 @@ let rec to_constr =
     to_constr b >>= fun b -> ret (mkApp (a, [| b |]))
   | Let { name; ty; v; rest } ->
     to_constr ty >>= fun ty ->
+    to_annot name ty >>= fun name ->
     to_constr v >>= fun v ->
-    to_constr rest >>= fun rest -> ret (mkLetIn (to_annot name, v, ty, rest))
+    to_constr rest >>= fun rest -> ret (mkLetIn (name, v, ty, rest))
   | Lam (_bk, n, a, b) ->
     to_constr a >>= fun a ->
-    to_constr b >>= fun b -> ret (mkLambda (to_annot n, a, b))
+    to_annot n a >>= fun n ->
+    to_constr b >>= fun b -> ret (mkLambda (n, a, b))
   | Pi (_bk, n, a, b) ->
     to_constr a >>= fun a ->
-    to_constr b >>= fun b -> ret (mkProd (to_annot n, a, b))
+    to_annot n a >>= fun n ->
+    to_constr b >>= fun b -> ret (mkProd (n, a, b))
 
 and instantiate n univs uconv =
   assert (List.length univs < Sys.int_size);
@@ -900,7 +904,7 @@ and to_params uconv params =
     CList.fold_left_map
       (fun uconv (_bk, p, ty) ->
         let uconv, ty = to_constr ty uconv in
-        (uconv, RelDecl.LocalAssum (to_annot p, ty)))
+        (uconv, RelDecl.LocalAssum (to_annot p ty uconv, ty)))
       uconv params
   in
   (uconv, List.rev params)
