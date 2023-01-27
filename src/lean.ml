@@ -639,8 +639,17 @@ let coq_squashes graph (entry : Entries.mutual_inductive_entry) =
     | _ :: _ :: _ -> true
     | [ c ] -> (match Constr.kind c with Rel _ | App _ -> false | _ -> true)
 
-(** the kernel will deal with the relevance annot *)
-let to_annot n t uconv = Context.annotR (N.to_name n)
+let to_annot rels n t uconv =
+  (* In non upfront mode,
+     because we interleave defining new constants as we encounter them,
+     pushing rels and handling local universes,
+     we pass just the rel_context_val and merge it with the global env and the uconv here *)
+  let env = Global.env () in
+  let env = Environ.set_rel_context_val rels env in
+  let env = Environ.set_universes uconv.graph env in
+  let evd = Evd.from_env env in
+  let r = Retyping.relevance_of_type env evd (EConstr.of_constr t) in
+  Context.make_annot (N.to_name n) r
 
 (* bit n of [int_of_univs univs] is 1 iff [List.nth univs n] is SProp *)
 let int_of_univs =
@@ -799,6 +808,8 @@ let to_univ_level' u uconv =
   | Set -> uconv, Level Level.set
   | Prop -> assert false
 
+let empty_env = Environ.empty_rel_context_val
+
 let rec to_constr =
   let open Constr in
   let ( >>= ) x f uconv =
@@ -806,29 +817,33 @@ let rec to_constr =
     f x uconv
   in
   let ret x uconv = (uconv, x) in
-  let to_annot n t u = u, to_annot n t u in
-  function
+  let to_annot env n t u = u, to_annot env n t u in
+  let push_rel = Environ.push_rel_context_val in
+  fun env -> function
   | Bound i -> ret (mkRel (i + 1))
   | Sort univ ->
     to_univ_level' univ >>= fun u ->
     ret (mkSort (sort_of_level u))
   | Const (n, univs) -> instantiate n univs
   | App (a, b) ->
-    to_constr a >>= fun a ->
-    to_constr b >>= fun b -> ret (mkApp (a, [| b |]))
+    to_constr env a >>= fun a ->
+    to_constr env b >>= fun b -> ret (mkApp (a, [| b |]))
   | Let { name; ty; v; rest } ->
-    to_constr ty >>= fun ty ->
-    to_annot name ty >>= fun name ->
-    to_constr v >>= fun v ->
-    to_constr rest >>= fun rest -> ret (mkLetIn (name, v, ty, rest))
+    to_constr env ty >>= fun ty ->
+    to_annot env name ty >>= fun name ->
+    to_constr env v >>= fun v ->
+    to_constr (push_rel (LocalDef (name, v, ty)) env) rest >>= fun rest ->
+    ret (mkLetIn (name, v, ty, rest))
   | Lam (_bk, n, a, b) ->
-    to_constr a >>= fun a ->
-    to_annot n a >>= fun n ->
-    to_constr b >>= fun b -> ret (mkLambda (n, a, b))
+    to_constr env a >>= fun a ->
+    to_annot env n a >>= fun n ->
+    to_constr (push_rel (LocalAssum (n, a)) env) b >>= fun b ->
+    ret (mkLambda (n, a, b))
   | Pi (_bk, n, a, b) ->
-    to_constr a >>= fun a ->
-    to_annot n a >>= fun n ->
-    to_constr b >>= fun b -> ret (mkProd (n, a, b))
+    to_constr env a >>= fun a ->
+    to_annot env n a >>= fun n ->
+    to_constr (push_rel (LocalAssum (n, a)) env) b >>= fun b ->
+    ret (mkProd (n, a, b))
 
 and instantiate n univs uconv =
   assert (List.length univs < Sys.int_size);
@@ -868,8 +883,8 @@ and ensure_exists n i =
 
 and declare_def n { ty; body; univs; height } i =
   let uconv = start_uconv univs i in
-  let uconv, ty = to_constr ty uconv in
-  let uconv, body = to_constr body uconv in
+  let uconv, ty = to_constr empty_env ty uconv in
+  let uconv, body = to_constr empty_env body uconv in
   let univs, algs = univ_entry uconv univs in
   let ref = try quickdef ~name:(name_for n i) ~types:(Some ty) ~univs body
     with e ->
@@ -887,7 +902,7 @@ and declare_def n { ty; body; univs; height } i =
 
 and declare_ax n { ty; univs } i =
   let uconv = start_uconv univs i in
-  let uconv, ty = to_constr ty uconv in
+  let uconv, ty = to_constr empty_env ty uconv in
   let univs, algs = univ_entry uconv univs in
   let entry = Declare.(ParameterEntry (parameter_entry ~univs ty)) in
   let c =
@@ -900,14 +915,16 @@ and declare_ax n { ty; univs } i =
   inst
 
 and to_params uconv params =
-  let uconv, params =
+  let acc, params =
     CList.fold_left_map
-      (fun uconv (_bk, p, ty) ->
-        let uconv, ty = to_constr ty uconv in
-        (uconv, RelDecl.LocalAssum (to_annot p ty uconv, ty)))
-      uconv params
+      (fun (env,uconv) (_bk, p, ty) ->
+         let uconv, ty = to_constr env ty uconv in
+         let d = RelDecl.LocalAssum (to_annot env p ty uconv, ty) in
+         let env = Environ.push_rel_context_val d env in
+         ((env,uconv), d))
+      (empty_env,uconv) params
   in
-  (uconv, List.rev params)
+  (acc, List.rev params)
 
 and declare_ind n { params; ty; ctors; univs } i =
   let mind, algs, ind_name, cnames, univs, squashy =
@@ -932,12 +949,30 @@ and declare_ind n { params; ty; ctors; univs } i =
       (mind, [], ind_name, [ cname ], univs, squashy)
     | None ->
       let uconv = start_uconv univs i in
-      let uconv, params = to_params uconv params in
-      let uconv, ty = to_constr ty uconv in
+      let (env_params,uconv), params = to_params uconv params in
+      let uconv, ty = to_constr env_params ty uconv in
+      let _, sort =
+        let env_params =
+          Environ.set_rel_context_val env_params
+            (Environ.set_universes uconv.graph (Global.env ()))
+        in
+        Reduction.dest_arity env_params ty
+      in
+      let env_ind = Environ.push_rel_context_val
+          (LocalAssum
+             ((Context.make_annot (N.to_name n)
+                 (Sorts.relevance_of_sort sort)),
+              Term.it_mkProd_or_LetIn ty params))
+          empty_env
+      in
+      let env_ind_params =
+        Context.Rel.fold_outside Environ.push_rel_context_val params
+          ~init:env_ind
+      in
       let uconv, ctors =
         CList.fold_left_map
           (fun uconv (n, ty) ->
-            let uconv, ty = to_constr ty uconv in
+            let uconv, ty = to_constr env_ind_params ty uconv in
             (uconv, (n, ty)))
           uconv ctors
       in
@@ -1072,8 +1107,8 @@ let squashify n { params; ty; ctors; univs } =
     (* NB: if univs = [] this is just instantiation 0 *)
     start_uconv univs ((1 lsl List.length univs) - 1)
   in
-  let uconvP, paramsP = to_params uconvP params in
-  let uconvP, tyP = to_constr ty uconvP in
+  let (env_paramsP,uconvP), paramsP = to_params uconvP params in
+  let uconvP, tyP = to_constr env_paramsP ty uconvP in
   let envP =
     Environ.push_rel_context paramsP
       (Environ.set_universes uconvP.graph (Global.env ()))
@@ -1082,10 +1117,10 @@ let squashify n { params; ty; ctors; univs } =
   if not (Sorts.is_sprop sortP) then noprop
   else
     let uconvT = start_uconv univs 0 in
-    let uconvT, paramsT = to_params uconvT params in
-    let uconvT, tyT = to_constr ty uconvT in
+    let (env_paramsT,uconvT), paramsT = to_params uconvT params in
+    let uconvT, tyT = to_constr env_paramsT ty uconvT in
     let envT =
-      Environ.push_rel_context paramsT
+      Environ.set_rel_context_val env_paramsT
         (Environ.set_universes uconvT.graph (Global.env ()))
     in
     let _, sortT = Reduction.dest_arity envT tyT in
@@ -1094,15 +1129,19 @@ let squashify n { params; ty; ctors; univs } =
     | [] -> { maybe_prop = true; always_prop; lean_squashes = false }
     | _ :: _ :: _ -> { maybe_prop = true; always_prop; lean_squashes = true }
     | [ (_, ctor) ] ->
-      let uconvT, ctorT = to_constr ctor uconvT in
       let envT =
-        Environ.push_rel_context paramsT
-          (Environ.push_rel
-             (LocalAssum
-                ( Context.make_annot (N.to_name n)
-                    (Sorts.relevance_of_sort sortT),
-                  Term.it_mkProd_or_LetIn tyT paramsT ))
-             (Environ.set_universes uconvT.graph (Global.env ())))
+        Context.Rel.fold_outside Environ.push_rel_context_val paramsT
+          ~init:(Environ.push_rel_context_val
+                   (LocalAssum
+                      (Context.make_annot (N.to_name n)
+                         (Sorts.relevance_of_sort sortT),
+                       Term.it_mkProd_or_LetIn tyT paramsT))
+                   empty_env)
+      in
+      let uconvT, ctorT = to_constr envT ctor uconvT in
+      let envT =
+        Environ.set_rel_context_val envT
+          (Environ.set_universes uconvT.graph (Global.env ()))
       in
       let args, out = Reduction.hnf_decompose_prod envT ctorT in
       let forced =
