@@ -799,17 +799,6 @@ let to_univ_level' u uconv =
   | Set -> uconv, Level Level.set
   | Prop -> assert false
 
-(* with this off: best line 23000 in stdlib
-   stack overflow
-
-   update: got fixed by e9e637de26 (distinguish names foo.bar and foo_bar)
-*)
-let upfront_instances =
-  Goptions.declare_bool_option_and_ref ~depr:false
-    ~stage:Interp
-    ~key:[ "Lean"; "Upfront"; "Instantiation" ]
-    ~value:false
-
 let rec to_constr =
   let open Constr in
   let ( >>= ) x f uconv =
@@ -865,8 +854,8 @@ and ensure_exists n i =
   with Not_found ->
     (* TODO can we end up asking for a ctor or eliminator before
        asking for the inductive type? *)
-    if i = 0 then CErrors.user_err Pp.(N.pp n ++ str " was not instantiated!");
-    assert (not (upfront_instances ()));
+    (* if i = 0 then CErrors.user_err Pp.(N.pp n ++ str " was not instantiated!"); *)
+    (* assert (not (upfront_instances ())); *)
     (match N.Map.get n !entries with
     | Def def -> declare_def n def i
     | Ax ax -> declare_ax n ax i
@@ -1275,6 +1264,23 @@ let just_parse =
     ~key:[ "Lean"; "Just"; "Parsing" ]
     ~value:false
 
+(* with this off: best line 23000 in stdlib
+   stack overflow
+
+   update: got fixed by e9e637de26 (distinguish names foo.bar and foo_bar)
+*)
+let upfront_instances =
+  Goptions.declare_bool_option_and_ref ~depr:false
+    ~stage:Interp
+    ~key:[ "Lean"; "Upfront"; "Instantiation" ]
+    ~value:false
+
+let lazy_instances =
+  Goptions.declare_bool_option_and_ref ~depr:false
+    ~stage:Interp
+    ~key:[ "Lean"; "Lazy"; "Instantiation" ]
+    ~value:false
+
 let declare_instances act univs =
   let stop = if upfront_instances () then 1 lsl List.length univs else 1 in
   let rec loop i =
@@ -1283,7 +1289,7 @@ let declare_instances act univs =
       let () = act i in
       loop (i + 1)
   in
-  loop 0
+  if not (lazy_instances ()) then loop 0
 
 let declare_def name def =
   declare_instances (fun i -> ignore (declare_def name def i)) def.univs
