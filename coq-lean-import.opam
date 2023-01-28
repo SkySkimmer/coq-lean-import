@@ -7,7 +7,7 @@ dev-repo: "git+https://github.com/SkySkimmer/lean-import.git"
 bug-reports: "https://github.com/SkySkimmer/lean-import/issues"
 license: "LGPL-2.1-only"
 
-synopsis: "Plugin allowing Coq to import Lean exported files."
+synopsis: "Plugin allowing Coq to import Lean exported files"
 description: """
 Plugin allowing Coq to import Lean exported files."""
 
