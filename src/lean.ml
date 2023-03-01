@@ -285,7 +285,9 @@ end = struct
 
   let of_list x = x
 
-  let append a b = b :: a
+  let clean_string s = String.concat "__at__" (String.split_on_char '@' s)
+
+  let append a b = clean_string b :: a
 
   let raw_append a b = match a with [] -> [ b ] | hd :: tl -> (hd ^ b) :: tl
 
@@ -509,6 +511,10 @@ type expr =
       (** Let: undocumented in export_format.md *)
   | Lam of binder_kind * N.t * expr * expr
   | Pi of binder_kind * N.t * expr * expr
+  | Proj of N.t * int * expr
+    (** Proj: name of ind, field, term *)
+  | Nat of Z.t
+  | String of string
 
 type def = { ty : expr; body : expr; univs : N.t list; height : int }
 
@@ -539,6 +545,8 @@ let height entries =
     | Bound _ | Sort _ -> 0
     | Lam (_, _, a, b) | Pi (_, _, a, b) | App (a, b) -> max (h a) (h b)
     | Let { name = _; ty; v; rest } -> max (h ty) (max (h v) (h rest))
+    | Proj (_, _, c) -> h c
+    | Nat _ | String _ -> 0
   in
   h
 
@@ -645,7 +653,7 @@ let coq_squashes graph (entry : Entries.mutual_inductive_entry) =
     | _ :: _ :: _ -> true
     | [ c ] -> (match Constr.kind c with Rel _ | App _ -> false | _ -> true)
 
-let to_annot rels n t uconv =
+let with_env_evm rels uconv f x =
   (* In non upfront mode,
      because we interleave defining new constants as we encounter them,
      pushing rels and handling local universes,
@@ -654,8 +662,10 @@ let to_annot rels n t uconv =
   let env = Environ.set_rel_context_val rels env in
   let env = Environ.set_universes uconv.graph env in
   let evd = Evd.from_env env in
-  let r = Retyping.relevance_of_type env evd (EConstr.of_constr t) in
-  let r = EConstr.Unsafe.to_relevance r in
+  f env evd x
+
+let to_annot rels n t uconv =
+  let r = with_env_evm rels uconv (fun env evd r -> let r = Retyping.relevance_of_type env evd r in EConstr.Unsafe.to_relevance r) (EConstr.of_constr t) in
   Context.make_annot (N.to_name n) r
 
 (* bit n of [int_of_univs univs] is 1 iff [List.nth univs n] is SProp *)
@@ -823,6 +833,7 @@ let rec to_constr =
     let uconv, x = x uconv in
     f x uconv
   in
+  let get_uconv uconv = uconv, uconv in
   let ret x uconv = (uconv, x) in
   let to_annot env n t u = u, to_annot env n t u in
   let push_rel = Environ.push_rel_context_val in
@@ -851,6 +862,26 @@ let rec to_constr =
     to_annot env n a >>= fun n ->
     to_constr (push_rel (LocalAssum (n, a)) env) b >>= fun b ->
     ret (mkProd (n, a, b))
+  | Proj (_ind, field, c) ->
+    to_constr env c >>= fun c ->
+    get_uconv >>= fun uconv ->
+    (* we retype to get the ind, because otherwise we need the lean
+       univs for instantiation
+       This means we ignore the ind in the Proj data. *)
+    let ind = with_env_evm env uconv (fun env evd () ->
+        let c = EConstr.of_constr c in
+        let tc = Retyping.get_type_of env evd c in
+        let tc = fst (Termops.decompose_app_vect evd (Reductionops.whd_all env evd tc)) in
+        match Constr.kind (EConstr.Unsafe.to_constr tc) with
+        | Ind (ind,_) -> ind
+        | _ -> assert false)
+        ()
+    in
+    let p = Environ.get_projection (Global.env()) ind ~proj_arg:field in
+    (* unfolded?? *)
+    ret (mkProj (Projection.make p false, c))
+  | Nat _ -> CErrors.user_err Pp.(str "TODO native nat")
+  | String _ -> CErrors.user_err Pp.(str "TODO native string")
 
 and instantiate n univs uconv =
   assert (List.length univs < Sys.int_size);
@@ -884,11 +915,12 @@ and ensure_exists n i =
        asking for the inductive type? *)
     (* if i = 0 then CErrors.user_err Pp.(N.pp n ++ str " was not instantiated!"); *)
     (* assert (not (upfront_instances ())); *)
-    (match N.Map.get n !entries with
+    (match N.Map.find n !entries with
     | Def def -> declare_def n def i
     | Ax ax -> declare_ax n ax i
     | Ind ind -> declare_ind n ind i
-    | Quot -> CErrors.user_err Pp.(str "quot must be predeclared"))
+    | Quot -> CErrors.user_err Pp.(str "quot must be predeclared")
+    | exception _ -> CErrors.user_err Pp.(str "missing "++N.pp n ))
 
 and declare_def n { ty; body; univs; height } i =
   let uconv = start_uconv univs i in
@@ -1072,7 +1104,8 @@ and declare_ind n { params; ty; ctors; univs } i =
       in
       ( inst, uentry )
     in
-    (lean_scheme env ~dep:(not squashy.always_prop) mind inst u, uentry)
+    (* lean 4 change: always dep? was not squashy.always_prop*)
+    (lean_scheme env ~dep:true mind inst u, uentry)
   in
   let nrec = N.append n "rec" in
   let elims =
@@ -1296,6 +1329,9 @@ let rec replace_ind ind k = function
     Lam (bk, name, replace_ind ind k a, replace_ind ind (k + 1) b)
   | Pi (bk, name, a, b) ->
     Pi (bk, name, replace_ind ind k a, replace_ind ind (k + 1) b)
+  | Proj (n, field, c) ->
+    Proj (n, field, replace_ind ind k c)
+  | Nat _ | String _ as x -> x
 
 let rec pop_params npar ty =
   if npar = 0 then ([], ty)
@@ -1369,6 +1405,17 @@ let lcnt = ref 0
 
 let line_msg name =
   Feedback.msg_info Pp.(str "line " ++ int !lcnt ++ str ": " ++ N.pp name)
+
+let parse_hexa c =
+  if 'A' <= c && c <= 'F' then int_of_char c - int_of_char 'A'
+  else begin
+    assert ('0' <= c && c <= '9');
+    int_of_char c - int_of_char '0'
+  end
+
+let parse_char s =
+  assert (String.length s = 2);
+  Char.chr (parse_hexa s.[0] * 16 + parse_hexa s.[1])
 
 let do_line state l =
   (* Lean printing strangeness: sometimes we get double spaces (typically with INFIX) *)
@@ -1467,9 +1514,9 @@ let do_line state l =
         let u = as_univ state u in
         { state with exprs = RRange.append state.exprs (Sort u) }
       | "#EC" :: n :: univs ->
+        let n = get_name state n in
         assert (next = RRange.length state.exprs);
-        let n = get_name state n
-        and univs = List.map (as_univ state) univs in
+        let univs = List.map (as_univ state) univs in
         { state with exprs = RRange.append state.exprs (Const (n, univs)) }
       | [ "#EA"; a; b ] ->
         assert (next = RRange.length state.exprs);
@@ -1500,6 +1547,18 @@ let do_line state l =
         and ty = get_expr state ty
         and body = get_expr state body in
         { state with exprs = RRange.append state.exprs (Pi (bk, n, ty, body)) }
+      | [ "#EJ"; ind; field; term ] ->
+        let ind = get_name state ind
+        and field = int_of_string field
+        and term = get_expr state term in
+        { state with exprs = RRange.append state.exprs (Proj (ind, field, term)) }
+      | [ "#ELN"; n ] ->
+        let n = Z.of_string n in
+        { state with exprs = RRange.append state.exprs (Nat n) }
+      | "#ELS" :: bytes ->
+        let s = Seq.map parse_char (List.to_seq bytes) in
+        let s = String.of_seq s in
+        { state with exprs = RRange.append state.exprs (String s) }
       | _ ->
         CErrors.user_err
           Pp.(str "cannot understand " ++ str l ++ str "." ++ fnl ())
