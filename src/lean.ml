@@ -285,7 +285,13 @@ end = struct
 
   let of_list x = x
 
-  let clean_string s = String.concat "__at__" (String.split_on_char '@' s)
+  let toclean =
+    [('@', "__at__");
+     ('?', "__q");
+     ('!', "__B")]
+
+  let clean_string s =
+    List.fold_left (fun s (c,replace) -> String.concat replace (String.split_on_char c s)) s toclean
 
   let append a b = clean_string b :: a
 
@@ -883,8 +889,12 @@ let one_more_int nat =
   nat_ints := ZMap.add i c !nat_ints;
   max_known_int := i
 
+let max_nat_int = Z.of_string "100000"
+
 let nat_int nat i =
   assert (Z.leq Z.zero i);
+  if Z.leq max_nat_int i
+  then CErrors.user_err Pp.(str "native int too big: " ++ str (Z.to_string i));
   while Z.lt !max_known_int i do one_more_int nat done;
   ZMap.get i !nat_ints
 
