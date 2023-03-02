@@ -852,9 +852,11 @@ and instantiate n univs uconv =
   let i, univs = int_of_univs univs in
   let inst = ensure_exists n i in
   let subst l =
-    match Level.var_index l with
+    let u = match Level.var_index l with
     | None -> Universe.make l
     | Some n -> List.nth univs n
+    in
+    Some u
   in
   let extra =
     List.map
@@ -1082,9 +1084,11 @@ and declare_ind n { params; ty; ctors; univs } i =
         (* TODO AFAICT Lean reduces recursors eagerly, but ofc only when applied to a ctor
            Can we simulate that with strategy better than by leaving them at the default strat? *)
         let liftu l =
-          match Level.var_index l with
+          let u = match Level.var_index l with
           | None -> Universe.make l (* Set *)
           | Some i -> Universe.make (Level.var (i + 1))
+          in
+          Some u
         in
         let algs =
           if sort = InSProp then algs
