@@ -929,18 +929,24 @@ let rec to_constr =
     (* we retype to get the ind, because otherwise we need the lean
        univs for instantiation
        This means we ignore the ind in the Proj data. *)
-    let ind = with_env_evm env uconv (fun env evd () ->
-        let c = EConstr.of_constr c in
-        let tc = Retyping.get_type_of env evd c in
-        let tc = fst (Termops.decompose_app_vect evd (Reductionops.whd_all env evd tc)) in
-        match Constr.kind (EConstr.Unsafe.to_constr tc) with
-        | Ind (ind,_) -> ind
-        | _ -> assert false)
+    let c = with_env_evm env uconv (fun env evd () ->
+      let tc = Retyping.get_type_of env evd (EConstr.of_constr c) in
+      let tc, args = Termops.decompose_app_vect evd (Reductionops.whd_all env evd tc) in
+      let (ind, _) as indu = Constr.destInd (EConstr.Unsafe.to_constr tc) in
+      let mib = Global.lookup_mind (fst ind) in
+      begin match mib.mind_record with
+      | PrimRecord _ ->
+        let p = Declareops.inductive_make_projection ind mib ~proj_arg:field in
+        (* unfolded?? *)
+        mkProj (Projection.make p false, c)
+      | NotRecord ->
+        assert (mib.mind_packets.(snd ind).mind_relevance == Irrelevant);
+        CErrors.user_err Pp.(str "TODO projection for non record Prop inductive")
+      | FakeRecord -> assert false
+      end)
         ()
     in
-    let p = Environ.get_projection (Global.env()) ind ~proj_arg:field in
-    (* unfolded?? *)
-    ret (mkProj (Projection.make p false, c))
+    ret c
   | Nat i ->
     (* [nat_ints] is not synchronized so ensure Nat is instantiated *)
     instantiate (N.append N.anon "Nat") [] >>= fun nat ->
@@ -1086,12 +1092,17 @@ and declare_ind n { params; ty; ctors; univs } i =
       let graph = uconv.graph in
       let univs, algs = univ_entry_gen uconv univs in
       let ind_name = name_for n i in
-      let record = match indices, ctors, Sorts.is_sprop sort with
-        | [], [_,cty], false -> cty |> with_env_evm env_ind_params uconv (fun env evm cty ->
+      let record = match indices, ctors with
+        | [], [_,cty] -> cty |> with_env_evm env_ind_params uconv (fun env evm cty ->
             let args, _ = Reductionops.hnf_decompose_prod env evm (EConstr.of_constr cty) in
-            match args with
-            | [] -> None
-            | _ :: _ -> Some (Some [|default_proj_id|])
+            match args, Sorts.is_sprop sort with
+            | [], true -> None
+            | _ :: _, false -> Some (Some [|default_proj_id|])
+            | [], false -> None
+            | _ :: _, true ->
+              if List.for_all (fun (na,_) -> na.Context.binder_relevance == Irrelevant) args
+              then Some (Some [|default_proj_id|])
+              else None
           )
         | _ -> None
       in
