@@ -933,12 +933,12 @@ let rec to_constr =
     to_annot env n a >>= fun n ->
     to_constr (push_rel (LocalAssum (n, a)) env) b >>= fun b ->
     ret (mkProd (n, a, b))
-  | Proj (_ind, field, c) ->
+  | Proj (lean_ind, field, c) ->
     to_constr env c >>= fun c ->
     get_uconv >>= fun uconv ->
     (* we retype to get the ind, because otherwise we need the lean
        univs for instantiation
-       This means we ignore the ind in the Proj data. *)
+       This means we ignore the lean_ind in the Proj data. *)
     let c = with_env_evm env uconv (fun env evd () ->
       let tc = Retyping.get_type_of env evd (EConstr.of_constr c) in
       let tc, args = Termops.decompose_app_vect evd (Reductionops.whd_all env evd tc) in
@@ -949,10 +949,10 @@ let rec to_constr =
         let p = Declareops.inductive_make_projection ind mib ~proj_arg:field in
         (* unfolded?? *)
         mkProj (Projection.make p false, c)
-      | NotRecord ->
-        assert (mib.mind_packets.(snd ind).mind_relevance == Irrelevant);
-        CErrors.user_err Pp.(str "TODO projection for non record Prop inductive")
-      | FakeRecord -> assert false
+      | NotRecord | FakeRecord ->
+        if (mib.mind_packets.(snd ind).mind_relevance == Irrelevant)
+        then CErrors.user_err Pp.(str "TODO projection for non record Prop inductive")
+        else CErrors.user_err Pp.(str "cannot project non record " ++ N.pp lean_ind)
       end)
         ()
     in
@@ -1145,6 +1145,7 @@ and declare_ind n { params; ty; ctors; univs } i =
             (* the ubinders API is kind of shit here *)
             (UState.Polymorphic_entry UContext.empty,UnivNames.empty_binders)
             []
+            ~primitive_expected:(Option.has_some record)
         in
         if squashy.lean_squashes || not coq_squashes then act ()
         else with_unsafe_univs act ()
