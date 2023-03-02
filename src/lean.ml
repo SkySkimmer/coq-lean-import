@@ -589,20 +589,20 @@ Lean classifies inductives in the following way:
       -> squashed
       typically [exists]
 
-Additionally, the recursor is nondependent when the type is always Prop,
-otherwise dependent (including for sometimes-Prop types)
+Additionally, the recursor is always dependent (since Lean 4)
 (this implem detail isn't in the TTofLean paper)
 Special reduction also seems restricted to always-Prop types.
 
 NB: in practice (all stdlib and mathlib) the target universe is available without reduction
 (ie syntactic arity) even though the system doesn't require it.
 so we can just look at it directly (we don't want to implement a reduction system)
+Update: now we have correct Coq envs so we could reduce the Coq term?
 
 Difference with Coq:
 - a non-Prop instantiation of possibly Prop types will never be squashed
 - non squashed possibly-Prop types at a Prop instantiation are squashed
   (unless empty or uip branch)
-- we need uip branch for the special reduction.
+- we need uip for the special reduction.
   TTofLean sounds like we need an encoding with primitive records
   but testing indicates otherwise (all args in output type case).
 - we will always need unsafe flags for [Acc], and possibly for [and].
@@ -612,15 +612,20 @@ some other globals with Prop that won't actually be used
 (assuming the inductive is not used with all-Prop)
 This probably doesn't matter much, also if we start using upfront
 instantiations it won't matter at all.
+
+Primitive records:
+Lean autodetects all record-capable types as having primitive
+projections, and also autogenerates the eliminators.
+Squashed Props with 1 ctor have primitive projections up to the first non-Prop field.
 *)
 
 type squashy = {
-  maybe_prop : bool;  (** used for optim, not fundamental *)
+  maybe_prop : bool;
+  (** used for optim, not fundamental *)
   always_prop : bool;
-      (** controls whether the lean eliminator is dependent (and
-              special reduction, but we just let Coq do its thing for that). *)
+  (** controls special reduction, but we just let Coq do its thing for that *)
   lean_squashes : bool;
-      (** Self descriptive. We handle necessity of unsafe flags per-instantiation. *)
+  (** Self descriptive. We handle necessity of unsafe flags per-instantiation. *)
 }
 
 let noprop = { maybe_prop = false; always_prop = false; lean_squashes = false }
@@ -827,6 +832,62 @@ let to_univ_level' u uconv =
 
 let empty_env = Environ.empty_rel_context_val
 
+let default_proj_id = Id.of_string "default_proj_id"
+
+type error_mode =
+  | Skip
+  | Stop
+  | Fail
+
+let error_mode =
+  let print = function
+    | Skip -> "Skip"
+    | Stop -> "Stop"
+    | Fail -> "Fail"
+  in
+  let interp = function
+    | "Skip" -> Skip
+    | "Stop" -> Stop
+    | "Fail" -> Fail
+    | s -> CErrors.user_err Pp.(str "Unknown error mode " ++ qstring s ++ str ".")
+  in
+  Goptions.declare_interpreted_string_option_and_ref ~depr:false
+    ~stage:Interp
+    ~key:["Lean";"Error";"Mode"]
+    ~value:Fail
+    interp print
+
+exception MissingQuot
+
+let skip_missing_quot =
+  Goptions.declare_bool_option_and_ref ~depr:false
+    ~stage:Interp
+    ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
+    ~value:true
+
+let error_mode = function
+  | MissingQuot when skip_missing_quot () -> Skip
+  | _ -> error_mode ()
+
+module ZMap = CMap.Make(Z)
+let nat_ints = ref ZMap.empty
+let max_known_int = ref (Z.pred Z.zero)
+
+let one_more_int nat =
+  let i = Z.succ !max_known_int in
+  let c = if Z.equal i Z.zero then Constr.mkConstructU ((nat,1), Univ.Instance.empty)
+    else
+      let cpred = ZMap.get !max_known_int !nat_ints in
+      Constr.(mkApp (mkConstructU ((nat,2), Univ.Instance.empty), [|cpred|]))
+  in
+  nat_ints := ZMap.add i c !nat_ints;
+  max_known_int := i
+
+let nat_int nat i =
+  assert (Z.leq Z.zero i);
+  while Z.lt !max_known_int i do one_more_int nat done;
+  ZMap.get i !nat_ints
+
 let rec to_constr =
   let open Constr in
   let ( >>= ) x f uconv =
@@ -880,7 +941,11 @@ let rec to_constr =
     let p = Environ.get_projection (Global.env()) ind ~proj_arg:field in
     (* unfolded?? *)
     ret (mkProj (Projection.make p false, c))
-  | Nat _ -> CErrors.user_err Pp.(str "TODO native nat")
+  | Nat i ->
+    (* [nat_ints] is not synchronized so ensure Nat is instantiated *)
+    instantiate (N.append N.anon "Nat") [] >>= fun nat ->
+    let nat, _ = Constr.destInd nat in
+    ret (nat_int nat i)
   | String _ -> CErrors.user_err Pp.(str "TODO native string")
 
 and instantiate n univs uconv =
@@ -920,7 +985,7 @@ and ensure_exists n i =
     | Ax ax -> declare_ax n ax i
     | Ind ind -> declare_ind n ind i
     | Quot -> CErrors.user_err Pp.(str "quot must be predeclared")
-    | exception _ -> CErrors.user_err Pp.(str "missing "++N.pp n ))
+    | exception Not_found -> CErrors.user_err Pp.(str "missing "++N.pp n ))
 
 and declare_def n { ty; body; univs; height } i =
   let uconv = start_uconv univs i in
@@ -992,7 +1057,7 @@ and declare_ind n { params; ty; ctors; univs } i =
       let uconv = start_uconv univs i in
       let (env_params,uconv), params = to_params uconv params in
       let uconv, ty = to_constr env_params ty uconv in
-      let _, sort =
+      let indices, sort =
         let env_params =
           Environ.set_rel_context_val env_params
             (Environ.set_universes uconv.graph (Global.env ()))
@@ -1021,10 +1086,19 @@ and declare_ind n { params; ty; ctors; univs } i =
       let graph = uconv.graph in
       let univs, algs = univ_entry_gen uconv univs in
       let ind_name = name_for n i in
+      let record = match indices, ctors, Sorts.is_sprop sort with
+        | [], [_,cty], false -> cty |> with_env_evm env_ind_params uconv (fun env evm cty ->
+            let args, _ = Reductionops.hnf_decompose_prod env evm (EConstr.of_constr cty) in
+            match args with
+            | [] -> None
+            | _ :: _ -> Some (Some [|default_proj_id|])
+          )
+        | _ -> None
+      in
       let entry =
         {
           Entries.mind_entry_params = params;
-          mind_entry_record = None;
+          mind_entry_record = record;
           mind_entry_finite = Finite;
           mind_entry_inds =
             [
@@ -1112,35 +1186,37 @@ and declare_ind n { params; ty; ctors; univs } i =
     if squashy.lean_squashes then [ ("_indl", Sorts.InSProp) ]
     else [ ("_recl", InType); ("_indl", InSProp) ]
   in
+
+  let declare_one_scheme (suffix, sort) =
+    let id = Id.of_string (Id.to_string ind_name ^ suffix) in
+    let body, uentry = make_scheme sort in
+    let elim =
+      quickdef ~name:id ~types:None ~univs:(uentry, UnivNames.empty_binders) body
+      (* TODO implicits? *)
+    in
+    (* TODO AFAICT Lean reduces recursors eagerly, but ofc only when applied to a ctor
+       Can we simulate that with strategy better than by leaving them at the default strat? *)
+    let liftu l =
+      match Level.var_index l with
+      | None -> Universe.make l (* Set *)
+      | Some i -> Universe.make (Level.var (i + 1))
+    in
+    let algs =
+      if sort = InSProp then algs
+      else List.map (UnivSubst.subst_univs_universe liftu) algs
+    in
+    let elim = { ref = elim; algs } in
+    let j =
+      if squashy.lean_squashes then i
+      else if sort == InType then 2 * i
+      else (2 * i) + 1
+    in
+    add_declared nrec j elim
+  in
   let () =
     List.iter
-      (fun (suffix, sort) ->
-        let id = Id.of_string (Id.to_string ind_name ^ suffix) in
-        let body, uentry = make_scheme sort in
-        let elim =
-          quickdef ~name:id ~types:None ~univs:(uentry, UnivNames.empty_binders) body
-          (* TODO implicits? *)
-        in
-        (* TODO AFAICT Lean reduces recursors eagerly, but ofc only when applied to a ctor
-           Can we simulate that with strategy better than by leaving them at the default strat? *)
-        let liftu l =
-          let u = match Level.var_index l with
-          | None -> Universe.make l (* Set *)
-          | Some i -> Universe.make (Level.var (i + 1))
-          in
-          Some u
-        in
-        let algs =
-          if sort = InSProp then algs
-          else List.map (UnivSubst.subst_univs_universe liftu) algs
-        in
-        let elim = { ref = elim; algs } in
-        let j =
-          if squashy.lean_squashes then i
-          else if sort == InType then 2 * i
-          else (2 * i) + 1
-        in
-        add_declared nrec j elim)
+      (fun x -> try declare_one_scheme x with e when CErrors.noncritical e && error_mode e = Skip ->
+          Feedback.msg_info Pp.(str "Skipping scheme"))
       elims
   in
   inst
@@ -1255,8 +1331,6 @@ let declare_quot () =
       quots
   in
   Feedback.msg_info Pp.(str "quot registered")
-
-exception MissingQuot
 
 let declare_quot () =
   if Coqlib.has_ref "lean.quot" then declare_quot () else raise MissingQuot
@@ -1472,7 +1546,9 @@ let do_line state l =
         Pp.(
           str "bad notation: " ++ prlist_with_sep (fun () -> str "; ") str rest))
   | next :: rest ->
-    let next = int_of_string next in
+    let next = try int_of_string next
+      with Failure _ -> CErrors.user_err Pp.(str "Unknown start of line " ++ str next)
+    in
     let state =
       match rest with
       | [ "#NS"; base; cons ] ->
@@ -1575,39 +1651,6 @@ let { Goptions.get = print_squashes } =
     ~key:[ "Lean"; "Print"; "Squash"; "Info" ]
     ~value:false
     ()
-
-let { Goptions.get = skip_missing_quot } =
-  Goptions.declare_bool_option_and_ref
-    ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
-    ~value:true
-    ()
-
-type error_mode =
-  | Skip
-  | Stop
-  | Fail
-
-let { Goptions.get = error_mode } =
-  let print = function
-    | Skip -> "Skip"
-    | Stop -> "Stop"
-    | Fail -> "Fail"
-  in
-  let interp = function
-    | "Skip" -> Skip
-    | "Stop" -> Stop
-    | "Fail" -> Fail
-    | s -> CErrors.user_err Pp.(str "Unknown error mode " ++ qstring s ++ str ".")
-  in
-  Goptions.declare_interpreted_string_option_and_ref
-    ~key:["Lean";"Error";"Mode"]
-    ~value:Fail
-    interp print
-    ()
-
-let error_mode = function
-  | MissingQuot when skip_missing_quot () -> Skip
-  | _ -> error_mode ()
 
 let finish state =
   let max_univs, cnt =
