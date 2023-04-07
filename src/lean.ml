@@ -1641,11 +1641,11 @@ let do_line state l =
 
 let before_from = function None -> false | Some from -> !lcnt < from
 
-let freeze () = (Lib.freeze (), Summary.freeze_summaries ~marshallable:false)
+let freeze () = (Lib.Interp.freeze (), Summary.Interp.freeze_summaries ~marshallable:false)
 
 let unfreeze (lib, sum) =
-  Lib.unfreeze lib;
-  Summary.unfreeze_summaries sum
+  Lib.Interp.unfreeze lib;
+  Summary.Interp.unfreeze_summaries sum
 
 let rec do_input state ~from ~until ch =
   if until = Some !lcnt then begin
