@@ -1641,7 +1641,7 @@ let do_line state l =
 
 let before_from = function None -> false | Some from -> !lcnt < from
 
-let freeze () = (Lib.Interp.freeze (), Summary.Interp.freeze_summaries ~marshallable:false)
+let freeze () = (Lib.Interp.freeze (), Summary.Interp.freeze_summaries ())
 
 let unfreeze (lib, sum) =
   Lib.Interp.unfreeze lib;
