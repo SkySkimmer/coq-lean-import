@@ -1150,7 +1150,7 @@ let squashify n { params; ty; ctors; univs } =
       let args, out = Reduction.hnf_decompose_prod envT ctorT in
       let forced =
         (* NB dest_prod returns [out] in whnf *)
-        let _, outargs = Constr.decompose_appvect out in
+        let _, outargs = Constr.decompose_app out in
         Array.fold_left
           (fun forced arg ->
             match Constr.kind arg with
