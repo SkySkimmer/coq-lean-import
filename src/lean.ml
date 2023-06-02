@@ -390,11 +390,11 @@ type uconv = {
 
 let lean_id = Id.of_string "Lean"
 
-let lean_fancy_univs =
-  Goptions.declare_bool_option_and_ref ~depr:false
-    ~stage:Interp
+let { Goptions.get = lean_fancy_univs } =
+  Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Fancy"; "Universes" ]
     ~value:true
+    ()
 
 let level_of_universe_core u =
   let u =
@@ -1305,28 +1305,28 @@ let fix_ctor ind nparams ty =
 
 let as_univ state s = RRange.get state.univs (int_of_string s)
 
-let just_parse =
-  Goptions.declare_bool_option_and_ref ~depr:false
-    ~stage:Interp
+let { Goptions.get = just_parse } =
+  Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Just"; "Parsing" ]
     ~value:false
+    ()
 
 (* with this off: best line 23000 in stdlib
    stack overflow
 
    update: got fixed by e9e637de26 (distinguish names foo.bar and foo_bar)
 *)
-let upfront_instances =
-  Goptions.declare_bool_option_and_ref ~depr:false
-    ~stage:Interp
+let { Goptions.get = upfront_instances } =
+  Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Upfront"; "Instantiation" ]
     ~value:false
+    ()
 
-let lazy_instances =
-  Goptions.declare_bool_option_and_ref ~depr:false
-    ~stage:Interp
+let { Goptions.get = lazy_instances } =
+  Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Lazy"; "Instantiation" ]
     ~value:false
+    ()
 
 let declare_instances act univs =
   let stop = if upfront_instances () then 1 lsl List.length univs else 1 in
@@ -1504,24 +1504,24 @@ let rec is_arity = function
   | Pi (_, _, _, b) -> is_arity b
   | _ -> false
 
-let print_squashes =
-  Goptions.declare_bool_option_and_ref ~depr:false
-    ~stage:Interp
+let { Goptions.get = print_squashes } =
+  Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Print"; "Squash"; "Info" ]
     ~value:false
+    ()
 
-let skip_missing_quot =
-  Goptions.declare_bool_option_and_ref ~depr:false
-    ~stage:Interp
+let { Goptions.get = skip_missing_quot } =
+  Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
     ~value:true
+    ()
 
 type error_mode =
   | Skip
   | Stop
   | Fail
 
-let error_mode =
+let { Goptions.get = error_mode } =
   let print = function
     | Skip -> "Skip"
     | Stop -> "Stop"
@@ -1533,11 +1533,11 @@ let error_mode =
     | "Fail" -> Fail
     | s -> CErrors.user_err Pp.(str "Unknown error mode " ++ qstring s ++ str ".")
   in
-  Goptions.declare_interpreted_string_option_and_ref ~depr:false
-    ~stage:Interp
+  Goptions.declare_interpreted_string_option_and_ref
     ~key:["Lean";"Error";"Mode"]
     ~value:Fail
     interp print
+    ()
 
 let error_mode = function
   | MissingQuot when skip_missing_quot () -> Skip
@@ -1606,7 +1606,7 @@ let timeout = ref None
 let () =
   Goptions.declare_int_option
     {
-      optdepr = false;
+      optdepr = None;
       optstage = Interp;
       optkey = [ "Lean"; "Line"; "Timeout" ];
       optread = (fun () -> !timeout);
