@@ -11,7 +11,7 @@ Presenting a custom version of Coq, extended with definitional UIP
 (using the version at https://github.com/coq/coq/pull/10390) and
 providing a brand new `Lean Import` command.
 
-It is available at https://github.com/SkySkimmer/coq/tree/lean-import
+It is available at https://github.com/SkySkimmer/coq/tree/coq-lean-import
 
 This is an experimental alpha, it is useful to compare how Lean and
 Coq work but probably not much beyond that.
@@ -23,7 +23,7 @@ terms requires UIP.
 # How do I install this?
 
 Use your favorite installation procedure for Coq, using
-https://github.com/SkySkimmer/coq/tree/lean-import for the source.
+https://github.com/SkySkimmer/coq/tree/coq-lean-import for the source.
 
 # How do I use this?
 

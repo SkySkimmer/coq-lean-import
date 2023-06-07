@@ -2,9 +2,9 @@ opam-version: "2.0"
 maintainer: "gaetan.gilbert@skyskimmer.net"
 version: "dev"
 
-homepage: "https://github.com/SkySkimmer/lean-import"
-dev-repo: "git+https://github.com/SkySkimmer/lean-import.git"
-bug-reports: "https://github.com/SkySkimmer/lean-import/issues"
+homepage: "https://github.com/SkySkimmer/coq-lean-import"
+dev-repo: "git+https://github.com/SkySkimmer/coq-lean-import.git"
+bug-reports: "https://github.com/SkySkimmer/coq-lean-import/issues"
 license: "LGPL-2.1-only"
 
 synopsis: "Plugin allowing Coq to import Lean exported files"
