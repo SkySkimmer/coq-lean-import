@@ -416,15 +416,6 @@ Some stats:
 
 # Options
 
-## Conversion Checking
-
-On by default. This is a new kernel option, only available in this Coq
-variant.
-
-With it off, the kernel will skip conversion checks. This is useful to
-get past declarations where Coq's heuristics don't work without
-breaking their dependents.
-
 ## Lean Fancy Universes
 
 See explanation of surrogate universe names.
