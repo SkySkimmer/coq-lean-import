@@ -10,6 +10,7 @@
 
 open Names
 open Univ
+open UVars
 module RelDecl = Context.Rel.Declaration
 
 let __ () = assert false
@@ -126,7 +127,7 @@ let lean_scheme env ~dep mind u s =
     | Level s ->
       assert (Level.Set.cardinal (fst uctx) = 1 && Constraints.is_empty (snd uctx));
       let v = Level.Set.choose (fst uctx) in
-      Vars.subst_univs_level_constr (Level.Map.singleton v s) body
+      Vars.subst_univs_level_constr (Sorts.QVar.Map.empty, Level.Map.singleton v s) body
   in
 
   assert (
@@ -734,10 +735,10 @@ let univ_entry_gen { map; levels; graph } ounivs =
   let csts =
     Constraints.filter (fun (a, _, b) -> Level.Set.mem a uset || Level.Set.mem b uset) csts
   in
-  let unames = Array.of_list (make_unames univs ounivs) in
-  let univs = Instance.of_array (Array.of_list univs) in
+  let unames = [||], Array.of_list (make_unames univs ounivs) in
+  let univs = Instance.of_array ([||], Array.of_list univs) in
   let uctx = UContext.make unames (univs, csts) in
-  let subst = make_instance_subst univs in
+  let subst = snd (make_instance_subst univs) in
   let algs = List.rev_map (subst_univs_level_universe subst) algs in
   uctx, algs
 
@@ -868,7 +869,7 @@ and instantiate n univs uconv =
   let uconv, univs =
     CList.fold_left_map (fun uconv u -> to_univ_level u uconv) uconv univs
   in
-  let u = Instance.of_array (Array.of_list univs) in
+  let u = Instance.of_array ([||], Array.of_list univs) in
   (uconv, Constr.mkRef (inst.ref, u))
 
 and ensure_exists n i =
@@ -943,8 +944,8 @@ and declare_ind n { params; ty; ctors; univs } i =
       let univs =
         match i with
         | 0 ->
-          UContext.make [| Name (Id.of_string "u") |]
-            ( Instance.of_array [| univ_of_name (N.append N.anon "u") |],
+          UContext.make ([||], [| Name (Id.of_string "u") |])
+            ( Instance.of_array ([||], [| univ_of_name (N.append N.anon "u") |]),
               Constraints.empty )
         | 1 -> UContext.empty
         | _ -> assert false
@@ -1054,14 +1055,14 @@ and declare_ind n { params; ty; ctors; univs } i =
     let inst, uentry =
       let inst = UContext.instance univs in
       let csts = UContext.constraints univs in
-      let names = UContext.names univs in
+      let qnames, unames = UContext.names univs in
       let uentry = match u with
         | LSProp -> UState.Polymorphic_entry univs
         | Level u ->
           UState.Polymorphic_entry
-            (UContext.make (Array.append [| Name (Id.of_string "motive") |] names)
+            (UContext.make (qnames, Array.append [| Name (Id.of_string "motive") |] unames)
                ( Instance.of_array
-                   (Array.append [| u |] (Instance.to_array inst)),
+                   ([||], Array.append [| u |] (snd (Instance.to_array inst))),
                  csts ) )
       in
       ( inst, uentry )
