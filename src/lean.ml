@@ -198,6 +198,7 @@ let lean_scheme env ~dep mind u s =
     let fcs = List.rev fcs in
     let body =
       let open CClosure in
+      let open RedFlags in
       let env = Environ.push_rel_context paramsP env in
       let env = Environ.push_rel_context fcs env in
       norm_val (create_clos_infos betaiota env) (create_tab ()) (inject body)
