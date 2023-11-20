@@ -1019,7 +1019,7 @@ and declare_ind n { params; ty; ctors; univs } i =
       in
       assert (
         squashy.lean_squashes
-        || (Global.lookup_mind mind).mind_packets.(0).mind_kelim == InType);
+        || (Global.lookup_mind mind).mind_packets.(0).mind_squashed == None);
       (mind, algs, ind_name, cnames, univs, squashy)
   in
 
