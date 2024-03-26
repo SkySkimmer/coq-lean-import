@@ -113,11 +113,14 @@ let lean_scheme env ~dep mind u s =
 
   let body =
     let sigma = Evd.from_env env in
+    let sigma, s' = Evd.fresh_sort_in_family ~rigid:UnivRigid sigma
+        (if s = LSProp then InSProp else InType)
+    in
     let sigma, body =
       Indrec.build_induction_scheme env sigma
         ((mind, 0), u)
         dep
-        (if s = LSProp then InSProp else InType)
+        s'
     in
     let uctx = Evd.universe_context_set sigma in
     match s with
@@ -1149,7 +1152,7 @@ let squashify n { params; ty; ctors; univs } =
         Environ.set_rel_context_val envT
           (Environ.set_universes uconvT.graph (Global.env ()))
       in
-      let args, out = Reduction.hnf_decompose_prod envT ctorT in
+      let args, out = Reduction.whd_decompose_prod envT ctorT in
       let forced =
         (* NB dest_prod returns [out] in whnf *)
         let _, outargs = Constr.decompose_app out in
