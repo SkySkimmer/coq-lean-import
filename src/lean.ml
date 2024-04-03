@@ -901,7 +901,7 @@ and declare_def n { ty; body; univs; height } i =
   in
   let () =
     let c = match ref with ConstRef c -> c | _ -> assert false in
-    Global.set_strategy (Evaluable.EvalConstRef c) (Level (-height))
+    Global.set_strategy (Conv_oracle.EvalConstRef c) (Level (-height))
   in
   let inst = { ref; algs } in
   let () = add_declared n i inst in
