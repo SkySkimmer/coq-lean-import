@@ -118,10 +118,11 @@ let lean_scheme env ~dep mind u s =
     in
     let sigma, body =
       Indrec.build_induction_scheme env sigma
-        ((mind, 0), u)
+        ((mind, 0), EConstr.EInstance.make u)
         dep
         s'
     in
+    let body = EConstr.Unsafe.to_constr body in
     let uctx = Evd.universe_context_set sigma in
     match s with
     | LSProp ->
