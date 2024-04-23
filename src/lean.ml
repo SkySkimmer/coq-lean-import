@@ -655,6 +655,7 @@ let to_annot rels n t uconv =
   let env = Environ.set_universes uconv.graph env in
   let evd = Evd.from_env env in
   let r = Retyping.relevance_of_type env evd (EConstr.of_constr t) in
+  let r = EConstr.Unsafe.to_relevance r in
   Context.make_annot (N.to_name n) r
 
 (* bit n of [int_of_univs univs] is 1 iff [List.nth univs n] is SProp *)
