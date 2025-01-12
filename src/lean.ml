@@ -465,7 +465,7 @@ let rec level_of_sets uconv n =
         if lean_fancy_univs () then level_of_universe_core [ (Level.set, n) ]
         else UnivGen.fresh_level ()
       in
-      Global.push_context_set ~strict:true
+      Global.push_context_set
         (Level.Set.singleton l, Constraints.singleton (p, Lt, l));
       sets := Int.Map.add n l !sets;
       let graph = add_universe l ~lbound:p uconv.graph in
