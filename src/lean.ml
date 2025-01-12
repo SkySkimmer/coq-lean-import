@@ -465,7 +465,7 @@ let rec level_of_sets uconv n =
         if lean_fancy_univs () then level_of_universe_core [ (Level.set, n) ]
         else UnivGen.fresh_level ()
       in
-      Global.push_context_set
+      Global.push_context_set ~strict:true
         (Level.Set.singleton l, Constraints.singleton (p, Lt, l));
       sets := Int.Map.add n l !sets;
       let graph = add_universe l ~lbound:p uconv.graph in
@@ -845,7 +845,7 @@ type error_mode =
   | Stop
   | Fail
 
-let error_mode =
+let { Goptions.get = error_mode } =
   let print = function
     | Skip -> "Skip"
     | Stop -> "Stop"
@@ -857,19 +857,21 @@ let error_mode =
     | "Fail" -> Fail
     | s -> CErrors.user_err Pp.(str "Unknown error mode " ++ qstring s ++ str ".")
   in
-  Goptions.declare_interpreted_string_option_and_ref ~depr:false
+  Goptions.declare_interpreted_string_option_and_ref
     ~stage:Interp
     ~key:["Lean";"Error";"Mode"]
     ~value:Fail
     interp print
+    ()
 
 exception MissingQuot
 
-let skip_missing_quot =
-  Goptions.declare_bool_option_and_ref ~depr:false
+let { Goptions.get = skip_missing_quot } =
+  Goptions.declare_bool_option_and_ref
     ~stage:Interp
     ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
     ~value:true
+    ()
 
 let error_mode = function
   | MissingQuot when skip_missing_quot () -> Skip
