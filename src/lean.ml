@@ -883,10 +883,10 @@ let max_known_int = ref (Z.pred Z.zero)
 
 let one_more_int nat =
   let i = Z.succ !max_known_int in
-  let c = if Z.equal i Z.zero then Constr.mkConstructU ((nat,1), Univ.Instance.empty)
+  let c = if Z.equal i Z.zero then Constr.mkConstructU ((nat,1), UVars.Instance.empty)
     else
       let cpred = ZMap.get !max_known_int !nat_ints in
-      Constr.(mkApp (mkConstructU ((nat,2), Univ.Instance.empty), [|cpred|]))
+      Constr.(mkApp (mkConstructU ((nat,2), UVars.Instance.empty), [|cpred|]))
   in
   nat_ints := ZMap.add i c !nat_ints;
   max_known_int := i
@@ -943,16 +943,16 @@ let rec to_constr =
        This means we ignore the lean_ind in the Proj data. *)
     let c = with_env_evm env uconv (fun env evd () ->
       let tc = Retyping.get_type_of env evd (EConstr.of_constr c) in
-      let tc, args = Termops.decompose_app_vect evd (Reductionops.whd_all env evd tc) in
+      let tc, args = EConstr.decompose_app evd (Reductionops.whd_all env evd tc) in
       let (ind, _) as indu = Constr.destInd (EConstr.Unsafe.to_constr tc) in
       let mib = Global.lookup_mind (fst ind) in
       begin match mib.mind_record with
-      | PrimRecord _ ->
-        let p = Declareops.inductive_make_projection ind mib ~proj_arg:field in
+      | PrimRecord infos ->
+        let (p, r) = Declareops.inductive_make_projection ind mib ~proj_arg:field in
         (* unfolded?? *)
-        mkProj (Projection.make p false, c)
+        mkProj (Projection.make p false, r, c)
       | NotRecord | FakeRecord ->
-        if (mib.mind_packets.(snd ind).mind_relevance == Irrelevant)
+        if (mib.mind_packets.(snd ind).mind_relevance == EConstr.Unsafe.to_relevance EConstr.ERelevance.irrelevant)
         then CErrors.user_err Pp.(str "TODO projection for non record Prop inductive")
         else CErrors.user_err Pp.(str "cannot project non record " ++ N.pp lean_ind)
       end)
@@ -1106,13 +1106,13 @@ and declare_ind n { params; ty; ctors; univs } i =
       let ind_name = name_for n i in
       let record = match indices, ctors with
         | [], [_,cty] -> cty |> with_env_evm env_ind_params uconv (fun env evm cty ->
-            let args, _ = Reductionops.hnf_decompose_prod env evm (EConstr.of_constr cty) in
+            let args, _ = Reductionops.whd_decompose_prod env evm (EConstr.of_constr cty) in
             match args, Sorts.is_sprop sort with
             | [], true -> None
             | _ :: _, false -> Some (Some [|default_proj_id|])
             | [], false -> None
             | _ :: _, true ->
-              if List.for_all (fun (na,_) -> na.Context.binder_relevance == Irrelevant) args
+              if List.for_all (fun (na,_) -> na.Context.binder_relevance == EConstr.ERelevance.irrelevant) args
               then Some (Some [|default_proj_id|])
               else None
           )
@@ -1221,9 +1221,11 @@ and declare_ind n { params; ty; ctors; univs } i =
     (* TODO AFAICT Lean reduces recursors eagerly, but ofc only when applied to a ctor
        Can we simulate that with strategy better than by leaving them at the default strat? *)
     let liftu l =
-      match Level.var_index l with
+      let u = match Level.var_index l with
       | None -> Universe.make l (* Set *)
       | Some i -> Universe.make (Level.var (i + 1))
+      in
+      Some u
     in
     let algs =
       if sort = InSProp then algs
