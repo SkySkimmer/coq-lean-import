@@ -1118,11 +1118,11 @@ and declare_ind n { params; ty; ctors; univs } i =
           )
         | _ -> None
       in
-      let entry =
+      let entry finite =
         {
           Entries.mind_entry_params = params;
           mind_entry_record = record;
-          mind_entry_finite = Finite;
+          mind_entry_finite = finite;
           mind_entry_inds =
             [
               {
@@ -1139,16 +1139,20 @@ and declare_ind n { params; ty; ctors; univs } i =
       in
       let squashy = N.Map.get n !squash_info in
       let coq_squashes =
-        if squashy.maybe_prop then coq_squashes graph entry else false
+        if squashy.maybe_prop then coq_squashes graph (entry Finite) else false
       in
       let mind =
-        let act () =
-          DeclareInd.declare_mutual_inductive_with_eliminations entry
+        let act finite =
+          DeclareInd.declare_mutual_inductive_with_eliminations (entry finite)
             (* the ubinders API is kind of shit here *)
             (UState.Polymorphic_entry UContext.empty,UnivNames.empty_binders)
             []
             ~primitive_expected:(Option.has_some record)
         in
+        let act () =
+          try
+            act BiFinite
+          with e -> act Finite in
         if squashy.lean_squashes || not coq_squashes then act ()
         else with_unsafe_univs act ()
       in
