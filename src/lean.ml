@@ -795,7 +795,7 @@ let get_predeclared_eq n i =
   if N.equal n (N.append N.anon "eq") then
     let ind_name = name_for_core n i in
     let reg = "lean." ^ Id.to_string ind_name in
-    match Coqlib.lib_ref reg with
+    match Rocqlib.lib_ref reg with
     | IndRef (ind, 0) -> Some (ind_name, ind)
     | _ ->
       CErrors.user_err
@@ -1384,7 +1384,7 @@ let declare_quot () =
               "lean." ^ N.to_lean_string lean
               ^ if i = 0 then "" else "_inst" ^ string_of_int i
             in
-            let ref = Coqlib.lib_ref reg in
+            let ref = Rocqlib.lib_ref reg in
             let () = add_declared lean i { ref; algs = [] } in
             loop (i + 1)
         in
@@ -1394,7 +1394,7 @@ let declare_quot () =
   Feedback.msg_info Pp.(str "quot registered")
 
 let declare_quot () =
-  if Coqlib.has_ref "lean.quot" then declare_quot () else raise MissingQuot
+  if Rocqlib.has_ref "lean.quot" then declare_quot () else raise MissingQuot
 
 let do_bk = function
   | "#BD" -> NotImplicit
