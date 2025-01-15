@@ -819,9 +819,6 @@ let entries : entry N.Map.t ref = Summary.ref ~name:"lean-entries" N.Map.empty
 let squash_info : squashy N.Map.t ref =
   Summary.ref ~name:"lean-squash-info" N.Map.empty
 
-let declared_ids : Id.Set.t ref =
-  Summary.ref ~name:"lean-declared-ids" Id.Set.empty
-
 let add_declared n i inst =
   declared :=
     N.Map.update n
@@ -829,15 +826,6 @@ let add_declared n i inst =
         | None -> Some (Int.Map.singleton i inst)
         | Some m -> Some (Int.Map.add i inst m))
       !declared
-
-let add_declared_id n =
-  declared_ids := Id.Set.add n !declared_ids
-
-
-let name_for_field base =
-  if not (Global.exists_objlabel (Label.of_id base)) then base
-  else
-    Namegen.next_global_ident_away base !declared_ids
 
 let to_univ_level' u uconv =
   match to_universe uconv.map u with
@@ -911,6 +899,11 @@ let nat_int nat i =
   then CErrors.user_err Pp.(str "native int too big: " ++ str (Z.to_string i));
   while Z.lt !max_known_int i do one_more_int nat done;
   ZMap.get i !nat_ints
+
+let lcnt = ref 0
+
+let line_msg name =
+  Feedback.msg_info Pp.(str "line " ++ int !lcnt ++ str ": " ++ N.pp name)
 
 let rec to_constr =
   let open Constr in
@@ -1119,11 +1112,13 @@ and declare_ind n { params; ty; ctors; univs } i =
       let record, fields, field_ids = match indices, ctors with
         | [], [_,cty] -> cty |> with_env_evm env_ind_params uconv (fun env evm cty ->
             let args, _ = Reductionops.whd_decompose_prod env evm (EConstr.of_constr cty) in
-            let field_ids = List.map (fun (na, _) -> match na.Context.binder_name with
-              | Names.Anonymous -> Names.Anonymous
-              | Names.Name id -> Names.Name (name_for_field id)
-              (* XXX TODO: update the type with the new name *)
-            )
+            let _, field_ids = List.fold_left_map (fun ids (na, _) -> match na.Context.binder_name with
+              | Names.Anonymous -> ids, Names.Anonymous
+              | Names.Name id -> let id = Namegen.next_global_ident_away id ids in
+                  let ids = Id.Set.add id ids in
+                  line_msg (N.of_list [Names.Id.to_string id; "(field)"; Names.Id.to_string ind_name]);
+                  ids, Names.Name id
+            ) (Id.Set.add ind_name Id.Set.empty)
               args in
             let fields = List.map2 (fun name (na, ty) ->
               let relevance = if na.Context.binder_relevance == EConstr.ERelevance.irrelevant then Sorts.Irrelevant else Sorts.Relevant in
@@ -1193,10 +1188,7 @@ and declare_ind n { params; ty; ctors; univs } i =
             let projections_kind = Decls.StructureComponent in
             let proj_flags = List.map (fun _ -> { Record.Internal.pf_coercion = false; pf_reversible = false; pf_instance = false; pf_priority = None; pf_locality = Goptions.OptDefault; pf_canonical = false }) fields in
             let implfs = List.map (fun _ -> []) fields in
-            ignore(Record.Internal.declare_projections (mind, 0) (Entries.Polymorphic_entry univs, UnivNames.empty_binders) ~kind:projections_kind inhabitant_id proj_flags implfs fields);
-            List.iter (function
-              | Names.Anonymous -> ()
-              | Names.Name id -> add_declared_id id) field_ids
+            ignore(Record.Internal.declare_projections (mind, 0) (Entries.Polymorphic_entry univs, UnivNames.empty_binders) ~kind:projections_kind inhabitant_id proj_flags implfs fields)
         | _ -> ()
       in
       (mind, algs, ind_name, cnames, univs, squashy)
@@ -1544,11 +1536,6 @@ let add_entry n entry =
     | Ind ind -> declare_ind n ind
   in
   entries := N.Map.add n entry !entries
-
-let lcnt = ref 0
-
-let line_msg name =
-  Feedback.msg_info Pp.(str "line " ++ int !lcnt ++ str ": " ++ N.pp name)
 
 let parse_hexa c =
   if 'A' <= c && c <= 'F' then int_of_char c - int_of_char 'A'
