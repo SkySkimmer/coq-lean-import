@@ -1104,19 +1104,31 @@ and declare_ind n { params; ty; ctors; univs } i =
       let graph = uconv.graph in
       let univs, algs = univ_entry_gen uconv univs in
       let ind_name = name_for n i in
-      let record = match indices, ctors with
+      let record, fields = match indices, ctors with
         | [], [_,cty] -> cty |> with_env_evm env_ind_params uconv (fun env evm cty ->
             let args, _ = Reductionops.whd_decompose_prod env evm (EConstr.of_constr cty) in
+            let field_ids = List.map (fun (na, _) -> match na.Context.binder_name with
+              | Names.Anonymous -> Names.Anonymous
+              | Names.Name id -> Names.Name (Names.Id.of_string (Names.Id.to_string ind_name ^ "_" ^ Names.Id.to_string id)))
+              args in
+            let fields = List.map2 (fun name (na, ty) ->
+              let relevance = if na.Context.binder_relevance == EConstr.ERelevance.irrelevant then Sorts.Irrelevant else Sorts.Relevant in
+              Context.Rel.Declaration.LocalAssum (Context.make_annot name relevance, EConstr.Unsafe.to_constr ty)
+                    ) field_ids args
+            in
+            let _field_names = Array.map (function
+            | Names.Anonymous -> default_proj_id
+            | Names.Name id -> id) (Array.of_list field_ids) in
             match args, Sorts.is_sprop sort with
-            | [], true -> None
-            | _ :: _, false -> Some (Some [|default_proj_id|])
-            | [], false -> None
+            | [], true -> None, []
+            | _ :: _, false -> Some (Some [|default_proj_id|](*field_names*)), fields
+            | [], false -> None, []
             | _ :: _, true ->
               if List.for_all (fun (na,_) -> na.Context.binder_relevance == EConstr.ERelevance.irrelevant) args
-              then Some (Some [|default_proj_id|])
-              else None
+              then Some (Some [|default_proj_id|](*field_names*)), fields
+              else None, []
           )
-        | _ -> None
+        | _ -> None, []
       in
       let entry finite =
         {
@@ -1159,6 +1171,17 @@ and declare_ind n { params; ty; ctors; univs } i =
       assert (
         squashy.lean_squashes
         || (Global.lookup_mind mind).mind_packets.(0).mind_squashed == None);
+      (* Declare projections if the inductive is a record *)
+      let () =
+        match record with
+        | Some (Some field_ids) ->
+            let inhabitant_id = ind_name in
+            let projections_kind = Decls.StructureComponent in
+            let proj_flags = List.map (fun _ -> { Record.Internal.pf_coercion = false; pf_reversible = false; pf_instance = false; pf_priority = None; pf_locality = Goptions.OptDefault; pf_canonical = false }) fields in
+            let implfs = List.map (fun _ -> []) fields in
+            ignore(Record.Internal.declare_projections (mind, 0) (Entries.Polymorphic_entry univs, UnivNames.empty_binders) ~kind:projections_kind inhabitant_id proj_flags implfs fields)
+        | _ -> ()
+      in
       (mind, algs, ind_name, cnames, univs, squashy)
   in
 

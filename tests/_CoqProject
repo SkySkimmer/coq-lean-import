@@ -5,3 +5,4 @@
 
 core.v
 init.v
+anomaly_print_projections.v
