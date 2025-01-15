@@ -819,6 +819,9 @@ let entries : entry N.Map.t ref = Summary.ref ~name:"lean-entries" N.Map.empty
 let squash_info : squashy N.Map.t ref =
   Summary.ref ~name:"lean-squash-info" N.Map.empty
 
+let declared_ids : Id.Set.t ref =
+  Summary.ref ~name:"lean-declared-ids" Id.Set.empty
+
 let add_declared n i inst =
   declared :=
     N.Map.update n
@@ -826,6 +829,15 @@ let add_declared n i inst =
         | None -> Some (Int.Map.singleton i inst)
         | Some m -> Some (Int.Map.add i inst m))
       !declared
+
+let add_declared_id n =
+  declared_ids := Id.Set.add n !declared_ids
+
+
+let name_for_field base =
+  if not (Global.exists_objlabel (Label.of_id base)) then base
+  else
+    Namegen.next_global_ident_away base !declared_ids
 
 let to_univ_level' u uconv =
   match to_universe uconv.map u with
@@ -1104,31 +1116,33 @@ and declare_ind n { params; ty; ctors; univs } i =
       let graph = uconv.graph in
       let univs, algs = univ_entry_gen uconv univs in
       let ind_name = name_for n i in
-      let record, fields = match indices, ctors with
+      let record, fields, field_ids = match indices, ctors with
         | [], [_,cty] -> cty |> with_env_evm env_ind_params uconv (fun env evm cty ->
             let args, _ = Reductionops.whd_decompose_prod env evm (EConstr.of_constr cty) in
             let field_ids = List.map (fun (na, _) -> match na.Context.binder_name with
               | Names.Anonymous -> Names.Anonymous
-              | Names.Name id -> Names.Name (Names.Id.of_string (Names.Id.to_string ind_name ^ "_" ^ Names.Id.to_string id)))
+              | Names.Name id -> Names.Name (name_for_field id)
+              (* XXX TODO: update the type with the new name *)
+            )
               args in
             let fields = List.map2 (fun name (na, ty) ->
               let relevance = if na.Context.binder_relevance == EConstr.ERelevance.irrelevant then Sorts.Irrelevant else Sorts.Relevant in
               Context.Rel.Declaration.LocalAssum (Context.make_annot name relevance, EConstr.Unsafe.to_constr ty)
                     ) field_ids args
             in
-            let _field_names = Array.map (function
+            (* let _field_names = Array.map (function
             | Names.Anonymous -> default_proj_id
-            | Names.Name id -> id) (Array.of_list field_ids) in
+            | Names.Name id -> id) (Array.of_list field_ids) in *)
             match args, Sorts.is_sprop sort with
-            | [], true -> None, []
-            | _ :: _, false -> Some (Some [|default_proj_id|](*field_names*)), fields
-            | [], false -> None, []
+            | [], true -> None, [], []
+            | _ :: _, false -> Some (Some [|default_proj_id|](*field_names*)), fields, field_ids
+            | [], false -> None, [], []
             | _ :: _, true ->
               if List.for_all (fun (na,_) -> na.Context.binder_relevance == EConstr.ERelevance.irrelevant) args
-              then Some (Some [|default_proj_id|](*field_names*)), fields
-              else None, []
+              then Some (Some [|default_proj_id|](*field_names*)), fields, field_ids
+              else None, [], []
           )
-        | _ -> None, []
+        | _ -> None, [], []
       in
       let entry finite =
         {
@@ -1174,12 +1188,15 @@ and declare_ind n { params; ty; ctors; univs } i =
       (* Declare projections if the inductive is a record *)
       let () =
         match record with
-        | Some (Some field_ids) ->
+        | Some (Some _) ->
             let inhabitant_id = ind_name in
             let projections_kind = Decls.StructureComponent in
             let proj_flags = List.map (fun _ -> { Record.Internal.pf_coercion = false; pf_reversible = false; pf_instance = false; pf_priority = None; pf_locality = Goptions.OptDefault; pf_canonical = false }) fields in
             let implfs = List.map (fun _ -> []) fields in
-            ignore(Record.Internal.declare_projections (mind, 0) (Entries.Polymorphic_entry univs, UnivNames.empty_binders) ~kind:projections_kind inhabitant_id proj_flags implfs fields)
+            ignore(Record.Internal.declare_projections (mind, 0) (Entries.Polymorphic_entry univs, UnivNames.empty_binders) ~kind:projections_kind inhabitant_id proj_flags implfs fields);
+            List.iter (function
+              | Names.Anonymous -> ()
+              | Names.Name id -> add_declared_id id) field_ids
         | _ -> ()
       in
       (mind, algs, ind_name, cnames, univs, squashy)
