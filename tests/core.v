@@ -1,3 +1,8 @@
 From LeanImport Require Import Lean.
-Set Lean Error Mode "Skip".
-Redirect "core.log" Lean Import "../dumps/core".
+
+
+Redirect "core1.log" Lean Import "../dumps/core" 1 5080.
+
+Fail Redirect "core2.log" Lean Import "../dumps/core" 5080 63566.
+
+(* Redirect "core3.log" Lean Import "../dumps/core" 5086 63566. *)
