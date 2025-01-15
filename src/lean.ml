@@ -1109,35 +1109,32 @@ and declare_ind n { params; ty; ctors; univs } i =
       let graph = uconv.graph in
       let univs, algs = univ_entry_gen uconv univs in
       let ind_name = name_for n i in
-      let record, fields, field_ids = match indices, ctors with
-        | [], [_,cty] -> cty |> with_env_evm env_ind_params uconv (fun env evm cty ->
-            let args, _ = Reductionops.whd_decompose_prod env evm (EConstr.of_constr cty) in
-            let _, field_ids = List.fold_left_map (fun ids (na, _) -> match na.Context.binder_name with
-              | Names.Anonymous -> ids, Names.Anonymous
-              | Names.Name id -> let id = Namegen.next_global_ident_away id ids in
+      let record, fields, ctys = match indices, ctys with
+        | [], [cty] -> cty |> with_env_evm env_ind_params uconv (fun env evm cty ->
+            let fields, codom = Reductionops.whd_decompose_prod env evm (EConstr.of_constr cty) in
+            let _, fields = List.fold_left_map (fun ids (na, t) ->
+                match na.Context.binder_name with
+                | Names.Anonymous -> ids, (na, t)
+                | Names.Name id ->
+                  let id = Namegen.next_global_ident_away id ids in
                   let ids = Id.Set.add id ids in
                   line_msg (N.of_list [Names.Id.to_string id; "(field)"; Names.Id.to_string ind_name]);
-                  ids, Names.Name id
-            ) (Id.Set.add ind_name Id.Set.empty)
-              args in
-            let fields = List.map2 (fun name (na, ty) ->
-              let relevance = if na.Context.binder_relevance == EConstr.ERelevance.irrelevant then Sorts.Irrelevant else Sorts.Relevant in
-              Context.Rel.Declaration.LocalAssum (Context.make_annot name relevance, EConstr.Unsafe.to_constr ty)
-                    ) field_ids args
+                  ids, ({ na with binder_name = Names.Name id}, t))
+                (Id.Set.add ind_name Id.Set.empty)
+                fields
             in
-            (* let _field_names = Array.map (function
-            | Names.Anonymous -> default_proj_id
-            | Names.Name id -> id) (Array.of_list field_ids) in *)
-            match args, Sorts.is_sprop sort with
-            | [], true -> None, [], []
-            | _ :: _, false -> Some (Some [|default_proj_id|](*field_names*)), fields, field_ids
-            | [], false -> None, [], []
+            let cty' = EConstr.it_mkProd codom fields in
+            let cty' = EConstr.Unsafe.to_constr cty' in
+            match fields, Sorts.is_sprop sort with
+            | [], true -> None, [], ctys
+            | _ :: _, false -> Some (Some [|default_proj_id|]), fields, [cty']
+            | [], false -> None, [], ctys
             | _ :: _, true ->
-              if List.for_all (fun (na,_) -> na.Context.binder_relevance == EConstr.ERelevance.irrelevant) args
-              then Some (Some [|default_proj_id|](*field_names*)), fields, field_ids
-              else None, [], []
+              if List.for_all (fun (na,_) -> na.Context.binder_relevance == EConstr.ERelevance.irrelevant) fields
+              then Some (Some [|default_proj_id|]), fields, [cty']
+              else None, [], ctys
           )
-        | _ -> None, [], []
+        | _ -> None, [], ctys
       in
       let entry finite =
         {
@@ -1188,6 +1185,8 @@ and declare_ind n { params; ty; ctors; univs } i =
             let projections_kind = Decls.StructureComponent in
             let proj_flags = List.map (fun _ -> { Record.Internal.pf_coercion = false; pf_reversible = false; pf_instance = false; pf_priority = None; pf_locality = Goptions.OptDefault; pf_canonical = false }) fields in
             let implfs = List.map (fun _ -> []) fields in
+            let fields = List.map (fun (na,t) -> RelDecl.LocalAssum (na, t)) fields in
+            let fields = EConstr.Unsafe.to_rel_context fields in
             ignore(Record.Internal.declare_projections (mind, 0) (Entries.Polymorphic_entry univs, UnivNames.empty_binders) ~kind:projections_kind inhabitant_id proj_flags implfs fields)
         | _ -> ()
       in
