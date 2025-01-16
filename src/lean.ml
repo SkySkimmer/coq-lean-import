@@ -793,22 +793,10 @@ let get_predeclared_ind indn n i =
     | exception _ -> None
   else None
 
-let get_predeclared_const const n i =
-  if N.equal n (N.append N.anon const) then
-    let const_name = name_for_core n i in
-    let reg = "lean." ^ Id.to_string const_name in
-    match Rocqlib.lib_ref reg with
-    | ConstRef c -> Some (const_name, c)
-    | _ ->
-      CErrors.user_err
-        Pp.(
-          str "Bad registration for " ++ str reg ++ str " expected a constant.")
-    | exception _ -> None
-  else None
 
 let get_predeclared_eq n i = get_predeclared_ind "eq" n i
 let get_predeclared_nat n i = get_predeclared_ind "Nat" n i
-let _get_predeclared_nat_double n = get_predeclared_const "Nat_dobule" n 0
+let nat_double = "Nat_double"
 
 (** For each name, the instantiation with all non-sprop univs should always be
     declared, but the instantiations with SProp may be lazily declared. We
@@ -888,14 +876,41 @@ let one_more_int nat =
 
 let max_nat_int = Z.of_string "100000"
 
-let nat_int nat i =
+let nat_int_binary nat double i =
   assert (Z.leq Z.zero i);
-  if Z.leq max_nat_int i then
-    CErrors.user_err Pp.(str "native int too big: " ++ str (Z.to_string i));
-  while Z.lt !max_known_int i do
-    one_more_int nat
-  done;
-  ZMap.get i !nat_ints
+  let rec to_binary z acc =
+    if Z.equal z Z.zero then acc
+    else
+      let bit = if Z.equal (Z.rem z (Z.of_int 2)) Z.zero then 0 else 1 in
+      to_binary (Z.div z (Z.of_int 2)) (bit :: acc)
+  in
+  let binary_representation = to_binary i [] in
+  let xO = Constr.mkConstructU ((nat, 1), UVars.Instance.empty) in
+  let xS = Constr.mkConstructU ((nat, 2), UVars.Instance.empty) in
+  let fS x = Constr.mkApp (xS, [| x |]) in
+  let fDouble x = Constr.mkApp (double, [| x |]) in
+  let rec construct_nat binary_list_rev =
+    match binary_list_rev with
+    | [] -> xO
+    | 0 :: rest ->
+      let rest_constr = construct_nat rest in
+      fDouble rest_constr
+    | 1 :: rest ->
+      let rest_constr = construct_nat rest in
+      fS (fDouble rest_constr)
+    | _ -> assert false
+  in
+  construct_nat (List.rev binary_representation)
+
+let nat_int nat double i =
+  assert (Z.leq Z.zero i);
+  if Z.leq max_nat_int i then nat_int_binary nat double i
+  else begin
+    while Z.lt !max_known_int i do
+      one_more_int nat
+    done;
+    ZMap.get i !nat_ints
+  end
 
 let lcnt = ref 0
 
@@ -979,7 +994,17 @@ let rec to_constr =
       (* [nat_ints] is not synchronized so ensure Nat is instantiated *)
       instantiate (N.append N.anon "Nat") [] >>= fun nat ->
       let nat, _ = Constr.destInd nat in
-      ret (nat_int nat i)
+      get_uconv >>= fun uconv ->
+      let double =
+        with_env_evm env uconv
+          (fun env evd () ->
+            let _, p =
+              Evd.fresh_global env evd (Rocqlib.lib_ref ("lean." ^ nat_double))
+            in
+            EConstr.to_constr evd p)
+          ()
+      in
+      ret (nat_int nat double i)
     | String _ -> CErrors.user_err Pp.(str "TODO native string")
 
 and instantiate n univs uconv =

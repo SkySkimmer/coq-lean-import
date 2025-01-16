@@ -76,7 +76,7 @@ End Quot.
 
 Inductive Nat := Nat_zero : Nat | Nat_succ : Nat -> Nat.
 
-Register Nat as lean.nat.
+Register Nat as lean.Nat.
 
 Fixpoint double (n : Nat) : Nat :=
   match n with
