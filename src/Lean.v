@@ -2,6 +2,7 @@ Declare ML Module "coq-lean-import.plugin".
 
 Set Universe Polymorphism.
 Set Printing Universes.
+Set Primitive Projections.
 
 Declare Scope lean_scope.
 Global Open Scope lean_scope.
