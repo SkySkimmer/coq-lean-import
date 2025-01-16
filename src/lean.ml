@@ -14,7 +14,6 @@ open UVars
 module RelDecl = Context.Rel.Declaration
 
 let __ () = assert false
-
 let invalid = Constr.(mkApp (mkSet, [| mkSet |]))
 
 let add_universe l ~lbound g =
@@ -25,26 +24,20 @@ let quickdef ~name ~types ~univs body =
   let entry = Declare.definition_entry ?types ~univs body in
   let scope = Locality.(Global ImportDefaultBehavior) in
   let kind = Decls.(IsDefinition Definition) in
-  let uctx = UState.empty (* used for ubinders and hook *) in
+  let uctx =
+    UState.empty
+    (* used for ubinders and hook *)
+  in
   Declare.declare_entry ~name ~scope ~kind ~impargs:[] ~uctx entry
 
-type extended_level =
-  | Level of Level.t
-  | LSProp
+type extended_level = Level of Level.t | LSProp
 
-(** produce [args, recargs] inside mixed context [args/recargs]
-    [info] is in reverse order, ie the head is about the last arg in application order
+(** produce [args, recargs] inside mixed context [args/recargs] [info] is in
+    reverse order, ie the head is about the last arg in application order
 
-    examples:
-    [] -> [],[]
-    [false] -> [1],[]
-    [true] -> [2],[1]
-    [true;false] -> [3;2],[1]
-    [false;true] -> [3;1],[2]
-    [false;false] -> [2;1],[]
-    [true;true] -> [4;2],[3;1]
-
-*)
+    examples: [] -> [],[] [false] -> [1],[] [true] -> [2],[1] [true;false] ->
+    [3;2],[1] [false;true] -> [3;1],[2] [false;false] -> [2;1],[] [true;true] ->
+    [4;2],[3;1] *)
 let reorder_inside_core info =
   let rec aux i args recargs = function
     | [] -> (args, recargs)
@@ -79,29 +72,34 @@ let rec reorder_outside info hyps c =
     (Constr.mkProd (n, t, c), k + 1)
   | _ -> assert false
 
-(** produce [forall args recargs, P (C args)] from mixed [forall args/recargs, P (C args)] *)
+(** produce [forall args recargs, P (C args)] from mixed
+    [forall args/recargs, P (C args)] *)
 let reorder_outside info ft =
   let hyps, out = Term.decompose_prod ft in
   fst (reorder_outside (List.rev info) (List.rev hyps) out)
 
 exception Occur
+
 let occur_mind mind term =
-  let rec occur_rec c = match Constr.kind c with
-    | Constr.Ind ((mind',_),_) -> if MutInd.UserOrd.equal mind mind' then raise_notrace Occur
+  let rec occur_rec c =
+    match Constr.kind c with
+    | Constr.Ind ((mind', _), _) ->
+      if MutInd.UserOrd.equal mind mind' then raise_notrace Occur
     | _ -> Constr.iter occur_rec c
   in
-  try occur_rec term; true with Occur -> false
+  try
+    occur_rec term;
+    true
+  with Occur -> false
 
-(** Build the body of a Lean-style scheme. [u] instantiates the
-    inductive, [s] is [None] for the SProp scheme and [Some l]
-    for a scheme with motive [l].
+(** Build the body of a Lean-style scheme. [u] instantiates the inductive, [s]
+    is [None] for the SProp scheme and [Some l] for a scheme with motive [l].
 
     Lean schemes differ from Coq schemes:
-    - the motive universe is the first bound universe for Lean
-      but the last for Coq (handled by caller)
-    - Lean puts induction hypotheses after all the constructor arguments,
-      Coq puts them immediately after the corresponding recursive argument.
- *)
+    - the motive universe is the first bound universe for Lean but the last for
+      Coq (handled by caller)
+    - Lean puts induction hypotheses after all the constructor arguments, Coq
+      puts them immediately after the corresponding recursive argument. *)
 let lean_scheme env ~dep mind u s =
   let mib = Global.lookup_mind mind in
   let nparams = mib.mind_nparams in
@@ -113,14 +111,14 @@ let lean_scheme env ~dep mind u s =
 
   let body =
     let sigma = Evd.from_env env in
-    let sigma, s' = Evd.fresh_sort_in_family ~rigid:UnivRigid sigma
+    let sigma, s' =
+      Evd.fresh_sort_in_family ~rigid:UnivRigid sigma
         (if s = LSProp then InSProp else InType)
     in
     let sigma, body =
       Indrec.build_induction_scheme env sigma
         ((mind, 0), EConstr.EInstance.make u)
-        dep
-        s'
+        dep s'
     in
     let body = EConstr.Unsafe.to_constr body in
     let uctx = Evd.universe_context_set sigma in
@@ -129,9 +127,12 @@ let lean_scheme env ~dep mind u s =
       assert (ContextSet.is_empty uctx);
       body
     | Level s ->
-      assert (Level.Set.cardinal (fst uctx) = 1 && Constraints.is_empty (snd uctx));
+      assert (
+        Level.Set.cardinal (fst uctx) = 1 && Constraints.is_empty (snd uctx));
       let v = Level.Set.choose (fst uctx) in
-      Vars.subst_univs_level_constr (Sorts.QVar.Map.empty, Level.Map.singleton v s) body
+      Vars.subst_univs_level_constr
+        (Sorts.QVar.Map.empty, Level.Map.singleton v s)
+        body
   in
 
   assert (
@@ -144,8 +145,8 @@ let lean_scheme env ~dep mind u s =
         let args = CList.firstn nargs args in
         CList.map
           (fun arg ->
-             let t = RelDecl.get_type arg in
-             not (occur_mind mind t))
+            let t = RelDecl.get_type arg in
+            not (occur_mind mind t))
           args)
       mip.mind_nf_lc
   in
@@ -227,21 +228,15 @@ module RRange : sig
   (** Like Range.t, but instead of cons we append *)
 
   val empty : 'a t
-
   val length : 'a t -> int
-
   val append : 'a t -> 'a -> 'a t
-
   val get : 'a t -> int -> 'a
-
   val singleton : 'a -> 'a t
 end = struct
   type 'a t = { data : 'a Range.t; len : int }
 
   let empty = { data = Range.empty; len = 0 }
-
   let length x = x.len
-
   let append { data; len } x = { data = Range.cons x data; len = len + 1 }
 
   let get { data; len } i =
@@ -254,59 +249,41 @@ module LeanName : sig
   type t = private string list
 
   val anon : t
-
   val of_list : string list -> t [@@warning "-32"]
-
   val append : t -> string -> t
-
   val equal : t -> t -> bool
 
   val raw_append : t -> string -> t
   (** for private names *)
 
   val to_coq_string : t -> string
-
   val to_lean_string : t -> string
-
   val to_id : t -> Id.t
-
   val to_name : t -> Name.t
-
   val pp : t -> Pp.t
 
   module Set : CSet.S with type elt = t
-
   module Map : CMap.ExtS with type key = t and module Set := Set
 end = struct
   type t = string list
   (** "foo.bar.baz" is [baz;bar;foo] (like with dirpaths) *)
 
   let anon : t = []
-
   let of_list x = x
-
-  let toclean =
-    [('@', "__at__");
-     ('?', "__q");
-     ('!', "__B")]
+  let toclean = [ ('@', "__at__"); ('?', "__q"); ('!', "__B") ]
 
   let clean_string s =
-    List.fold_left (fun s (c,replace) -> String.concat replace (String.split_on_char c s)) s toclean
+    List.fold_left
+      (fun s (c, replace) -> String.concat replace (String.split_on_char c s))
+      s toclean
 
   let append a b = clean_string b :: a
-
   let raw_append a b = match a with [] -> [ b ] | hd :: tl -> (hd ^ b) :: tl
-
   let to_id (x : t) = Id.of_string (String.concat "_" (List.rev x))
-
   let to_name x = if x = [] then Anonymous else Name (to_id x)
-
   let to_coq_string x = String.concat "_" (List.rev x)
-
   let to_lean_string x = String.concat "." (List.rev x)
-
   let pp x = Pp.(prlist_with_sep (fun () -> str ".") str) (List.rev x)
-
   let equal = CList.equal String.equal
 
   module Self = struct
@@ -335,16 +312,19 @@ let univ_of_sort = function
   | Set -> Some Universe.type0
   | Type u | QSort (_, u) -> Some u
 
-let sort_max (s1:Sorts.t) (s2:Sorts.t) = match s1, s2 with
-| (SProp, SProp) | (Prop, Prop) | (Set, Set) -> s1
-| (SProp, (Prop | Set | Type _ as s)) | ((Prop | Set | Type _) as s, SProp) -> s
-| (Prop, (Set | Type _ as s)) | ((Set | Type _) as s, Prop) -> s
-| (Set, Type u) | (Type u, Set) -> Sorts.sort_of_univ (Univ.Universe.sup Univ.Universe.type0 u)
-| (Type u, Type v) -> Sorts.sort_of_univ (Univ.Universe.sup u v)
-| (QSort _, _) | (_, QSort _) -> assert false
+let sort_max (s1 : Sorts.t) (s2 : Sorts.t) =
+  match (s1, s2) with
+  | SProp, SProp | Prop, Prop | Set, Set -> s1
+  | SProp, ((Prop | Set | Type _) as s) | ((Prop | Set | Type _) as s), SProp ->
+    s
+  | Prop, ((Set | Type _) as s) | ((Set | Type _) as s), Prop -> s
+  | Set, Type u | Type u, Set ->
+    Sorts.sort_of_univ (Univ.Universe.sup Univ.Universe.type0 u)
+  | Type u, Type v -> Sorts.sort_of_univ (Univ.Universe.sup u v)
+  | QSort _, _ | _, QSort _ -> assert false
 
-
-(** [map] goes from lean names to universes (in practice either SProp or a named level) *)
+(** [map] goes from lean names to universes (in practice either SProp or a named
+    level) *)
 let rec to_universe map = function
   | U.Prop -> Sorts.sprop
   | UNamed n -> sort_of_level (N.Map.get n map)
@@ -356,22 +336,22 @@ let rec to_universe map = function
 
 let rec do_n f x n = if n = 0 then x else do_n f (f x) (n - 1)
 
-(** in lean, imax(Prop+1,l)+1 <= max(Prop+1,l+1)
-   because:
-   - either l=Prop, so Prop+1 <= Prop+1
-   - or Prop+1 <= l so l+1 <= l+1
+(** in lean, imax(Prop+1,l)+1 <= max(Prop+1,l+1) because:
+    - either l=Prop, so Prop+1 <= Prop+1
+    - or Prop+1 <= l so l+1 <= l+1
 
-   to simulate this, each named level becomes > Set and we compute maxes accordingly
-*)
+    to simulate this, each named level becomes > Set and we compute maxes
+    accordingly *)
 
 let simplify_universe u =
   match Universe.repr u with
-  | (l, n) :: (l',n') :: rest when Level.is_set l ->
+  | (l, n) :: (l', n') :: rest when Level.is_set l ->
     if n <= n' + 1 || List.exists (fun (_, n') -> n <= n' + 1) rest then
       List.fold_left
         (fun u (l, n) ->
           Universe.sup u (do_n Universe.super (Universe.make l) n))
-        (do_n Universe.super (Universe.make l') n') rest
+        (do_n Universe.super (Universe.make l') n')
+        rest
     else u
   | _ -> u
 
@@ -390,15 +370,16 @@ let to_universe map u =
   let u = to_universe map u in
   simplify_sort u
 
-(** Map from [n] to the global level standing for [Set+n] (not including n=0). *)
+(** Map from [n] to the global level standing for [Set+n] (not including n=0).
+*)
 let sets : Level.t Int.Map.t ref =
   Summary.ref ~name:"lean-set-surrogates" Int.Map.empty
 
 type uconv = {
   map : extended_level N.Map.t;  (** Map from lean names to Coq universes *)
   levels : Level.t Universe.Map.t;
-      (** Map from algebraic universes to levels (only levels representing
-          an algebraic) *)
+      (** Map from algebraic universes to levels (only levels representing an
+          algebraic) *)
   graph : UGraph.t;
 }
 
@@ -407,8 +388,7 @@ let lean_id = Id.of_string "Lean"
 let { Goptions.get = lean_fancy_univs } =
   Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Fancy"; "Universes" ]
-    ~value:true
-    ()
+    ~value:true ()
 
 let level_of_universe_core u =
   let u =
@@ -429,7 +409,8 @@ let level_of_universe_core u =
       u
   in
   let s = (match u with [ _ ] -> "" | _ -> "max__") ^ String.concat "_" u in
-  Level.(make (UGlobal.make (DirPath.make [ Id.of_string_soft s; lean_id ]) "" 0))
+  Level.(
+    make (UGlobal.make (DirPath.make [ Id.of_string_soft s; lean_id ]) "" 0))
 
 let level_of_universe u =
   let u = Universe.repr u in
@@ -492,9 +473,9 @@ let to_univ_level u uconv =
         let graph =
           N.Map.fold
             (fun _ l' graph ->
-               match l' with
-               | LSProp -> graph
-               | Level l' -> update_graph (l, u) (l', Universe.make l') graph)
+              match l' with
+              | LSProp -> graph
+              | Level l' -> update_graph (l, u) (l', Universe.make l') graph)
             uconv.map graph
         in
         let uconv =
@@ -517,13 +498,11 @@ type expr =
       (** Let: undocumented in export_format.md *)
   | Lam of binder_kind * N.t * expr * expr
   | Pi of binder_kind * N.t * expr * expr
-  | Proj of N.t * int * expr
-    (** Proj: name of ind, field, term *)
+  | Proj of N.t * int * expr  (** Proj: name of ind, field, term *)
   | Nat of Z.t
   | String of string
 
 type def = { ty : expr; body : expr; univs : N.t list; height : int }
-
 type ax = { ty : expr; univs : N.t list }
 
 type ind = {
@@ -537,9 +516,8 @@ type entry = Def of def | Ax of ax | Ind of ind | Quot
 
 (** Definitional height, used for unfolding heuristics.
 
-   The definitional height is the longest sequence of constant
-   unfoldings until we get a term without definitions (recursors don't
-   count). *)
+    The definitional height is the longest sequence of constant unfoldings until
+    we get a term without definitions (recursors don't count). *)
 let height entries =
   let rec h = function
     | Const (c, _) ->
@@ -564,13 +542,14 @@ type notation = {
   level : int;
   token : string;
 }
-[@@warning "-69"] (* not yet used *)
+[@@warning "-69"]
+(* not yet used *)
 
 type instantiation = {
   ref : GlobRef.t;
   algs : Universe.t list;
-      (** For each extra universe, produce the algebraic it corresponds to
-          (the initial universes are replaced by the appropriate Var) *)
+      (** For each extra universe, produce the algebraic it corresponds to (the
+          initial universes are replaced by the appropriate Var) *)
 }
 
 (*
@@ -626,12 +605,13 @@ Squashed Props with 1 ctor have primitive projections up to the first non-Prop f
 *)
 
 type squashy = {
-  maybe_prop : bool;
-  (** used for optim, not fundamental *)
+  maybe_prop : bool;  (** used for optim, not fundamental *)
   always_prop : bool;
-  (** controls special reduction, but we just let Coq do its thing for that *)
+      (** controls special reduction, but we just let Coq do its thing for that
+      *)
   lean_squashes : bool;
-  (** Self descriptive. We handle necessity of unsafe flags per-instantiation. *)
+      (** Self descriptive. We handle necessity of unsafe flags
+          per-instantiation. *)
 }
 
 let noprop = { maybe_prop = false; always_prop = false; lean_squashes = false }
@@ -639,8 +619,8 @@ let noprop = { maybe_prop = false; always_prop = false; lean_squashes = false }
 let pp_squashy { maybe_prop; always_prop; lean_squashes } =
   let open Pp in
   (if maybe_prop then
-   if always_prop then str "is always Prop" else str "may be Prop"
-  else str "is never Prop")
+     if always_prop then str "is always Prop" else str "may be Prop"
+   else str "is never Prop")
   ++ spc ()
   ++
   if lean_squashes then str "and is squashed by Lean"
@@ -676,7 +656,13 @@ let with_env_evm rels uconv f x =
   f env evd x
 
 let to_annot rels n t uconv =
-  let r = with_env_evm rels uconv (fun env evd r -> let r = Retyping.relevance_of_type env evd r in EConstr.Unsafe.to_relevance r) (EConstr.of_constr t) in
+  let r =
+    with_env_evm rels uconv
+      (fun env evd r ->
+        let r = Retyping.relevance_of_type env evd r in
+        EConstr.Unsafe.to_relevance r)
+      (EConstr.of_constr t)
+  in
   Context.make_annot (N.to_name n) r
 
 (* bit n of [int_of_univs univs] is 1 iff [List.nth univs n] is SProp *)
@@ -684,11 +670,9 @@ let int_of_univs =
   let rec aux i acc = function
     | [] -> (i, acc)
     | u :: rest ->
-      match univ_of_sort u with
-      | None ->
-      aux ((i * 2) + 1) acc rest
-      | Some u ->
-      aux (i * 2) (u :: acc) rest
+      (match univ_of_sort u with
+      | None -> aux ((i * 2) + 1) acc rest
+      | Some u -> aux (i * 2) (u :: acc) rest)
   in
   fun l -> aux 0 [] (List.rev l)
 
@@ -715,7 +699,8 @@ let start_uconv univs i =
       let map, graph =
         if i mod 2 = 0 then
           let v = univ_of_name u in
-          (N.Map.add u (Level v) uconv.map, add_universe v ~lbound:set1 uconv.graph)
+          ( N.Map.add u (Level v) uconv.map,
+            add_universe v ~lbound:set1 uconv.graph )
         else (N.Map.add u LSProp uconv.map, uconv.graph)
       in
       aux { uconv with map; graph } (i / 2) univs
@@ -734,9 +719,7 @@ let univ_entry_gen { map; levels; graph } ounivs =
     CList.map_filter
       (fun u ->
         let v = N.Map.get u map in
-        match v with
-        | LSProp -> None
-        | Level v -> Some (u, v))
+        match v with LSProp -> None | Level v -> Some (u, v))
       ounivs
   in
   let ounivs, univs = List.split ounivs in
@@ -754,19 +737,23 @@ let univ_entry_gen { map; levels; graph } ounivs =
       let univs = List.rev univs in
       (univs, algs)
   in
-  let uset = List.fold_left (fun kept l -> Level.Set.add l kept) Level.Set.empty univs in
+  let uset =
+    List.fold_left (fun kept l -> Level.Set.add l kept) Level.Set.empty univs
+  in
   let kept = Level.Set.add Level.set uset in
   let kept = Int.Map.fold (fun _ -> Level.Set.add) !sets kept in
   let csts = UGraph.constraints_for ~kept graph in
   let csts =
-    Constraints.filter (fun (a, _, b) -> Level.Set.mem a uset || Level.Set.mem b uset) csts
+    Constraints.filter
+      (fun (a, _, b) -> Level.Set.mem a uset || Level.Set.mem b uset)
+      csts
   in
-  let unames = [||], Array.of_list (make_unames univs ounivs) in
+  let unames = ([||], Array.of_list (make_unames univs ounivs)) in
   let univs = Instance.of_array ([||], Array.of_list univs) in
   let uctx = UContext.make unames (univs, csts) in
   let subst = snd (make_instance_subst univs) in
   let algs = List.rev_map (subst_univs_level_universe subst) algs in
-  uctx, algs
+  (uctx, algs)
 
 let univ_entry a b =
   let uctx, algs = univ_entry_gen a b in
@@ -806,11 +793,11 @@ let get_predeclared_eq n i =
     | exception _ -> None
   else None
 
-(** For each name, the instantiation with all non-sprop univs should
-   always be declared, but the instantiations with SProp may be lazily
-   declared. We expect small instance lengths (experimentally at most
-   4 in the stdlib) so we represent instantiations as bit fields, bit
-   n is 1 iff universe n is instantiated by SProp. *)
+(** For each name, the instantiation with all non-sprop univs should always be
+    declared, but the instantiations with SProp may be lazily declared. We
+    expect small instance lengths (experimentally at most 4 in the stdlib) so we
+    represent instantiations as bit fields, bit n is 1 iff universe n is
+    instantiated by SProp. *)
 let declared : instantiation Int.Map.t N.Map.t ref =
   Summary.ref ~name:"lean-declared-instances" N.Map.empty
 
@@ -829,64 +816,55 @@ let add_declared n i inst =
 
 let to_univ_level' u uconv =
   match to_universe uconv.map u with
-  | SProp -> uconv, LSProp
+  | SProp -> (uconv, LSProp)
   | Type u | QSort (_, u) ->
     let uconv, u = to_univ_level u uconv in
-    uconv, Level u
-  | Set -> uconv, Level Level.set
+    (uconv, Level u)
+  | Set -> (uconv, Level Level.set)
   | Prop -> assert false
 
 let empty_env = Environ.empty_rel_context_val
-
 let default_proj_id = Id.of_string "default_proj_id"
 
-type error_mode =
-  | Skip
-  | Stop
-  | Fail
+type error_mode = Skip | Stop | Fail
 
 let { Goptions.get = error_mode } =
-  let print = function
-    | Skip -> "Skip"
-    | Stop -> "Stop"
-    | Fail -> "Fail"
-  in
+  let print = function Skip -> "Skip" | Stop -> "Stop" | Fail -> "Fail" in
   let interp = function
     | "Skip" -> Skip
     | "Stop" -> Stop
     | "Fail" -> Fail
-    | s -> CErrors.user_err Pp.(str "Unknown error mode " ++ qstring s ++ str ".")
+    | s ->
+      CErrors.user_err Pp.(str "Unknown error mode " ++ qstring s ++ str ".")
   in
-  Goptions.declare_interpreted_string_option_and_ref
-    ~stage:Interp
-    ~key:["Lean";"Error";"Mode"]
-    ~value:Fail
-    interp print
-    ()
+  Goptions.declare_interpreted_string_option_and_ref ~stage:Interp
+    ~key:[ "Lean"; "Error"; "Mode" ]
+    ~value:Fail interp print ()
 
 exception MissingQuot
 
 let { Goptions.get = skip_missing_quot } =
-  Goptions.declare_bool_option_and_ref
-    ~stage:Interp
+  Goptions.declare_bool_option_and_ref ~stage:Interp
     ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
-    ~value:true
-    ()
+    ~value:true ()
 
 let error_mode = function
   | MissingQuot when skip_missing_quot () -> Skip
   | _ -> error_mode ()
 
-module ZMap = CMap.Make(Z)
+module ZMap = CMap.Make (Z)
+
 let nat_ints = ref ZMap.empty
 let max_known_int = ref (Z.pred Z.zero)
 
 let one_more_int nat =
   let i = Z.succ !max_known_int in
-  let c = if Z.equal i Z.zero then Constr.mkConstructU ((nat,1), UVars.Instance.empty)
+  let c =
+    if Z.equal i Z.zero then Constr.mkConstructU ((nat, 1), UVars.Instance.empty)
     else
       let cpred = ZMap.get !max_known_int !nat_ints in
-      Constr.(mkApp (mkConstructU ((nat,2), UVars.Instance.empty), [|cpred|]))
+      Constr.(
+        mkApp (mkConstructU ((nat, 2), UVars.Instance.empty), [| cpred |]))
   in
   nat_ints := ZMap.add i c !nat_ints;
   max_known_int := i
@@ -895,9 +873,11 @@ let max_nat_int = Z.of_string "100000"
 
 let nat_int nat i =
   assert (Z.leq Z.zero i);
-  if Z.leq max_nat_int i
-  then CErrors.user_err Pp.(str "native int too big: " ++ str (Z.to_string i));
-  while Z.lt !max_known_int i do one_more_int nat done;
+  if Z.leq max_nat_int i then
+    CErrors.user_err Pp.(str "native int too big: " ++ str (Z.to_string i));
+  while Z.lt !max_known_int i do
+    one_more_int nat
+  done;
   ZMap.get i !nat_ints
 
 let lcnt = ref 0
@@ -911,65 +891,79 @@ let rec to_constr =
     let uconv, x = x uconv in
     f x uconv
   in
-  let get_uconv uconv = uconv, uconv in
+  let get_uconv uconv = (uconv, uconv) in
   let ret x uconv = (uconv, x) in
-  let to_annot env n t u = u, to_annot env n t u in
+  let to_annot env n t u = (u, to_annot env n t u) in
   let push_rel = Environ.push_rel_context_val in
   fun env -> function
-  | Bound i -> ret (mkRel (i + 1))
-  | Sort univ ->
-    to_univ_level' univ >>= fun u ->
-    ret (mkSort (sort_of_level u))
-  | Const (n, univs) -> instantiate n univs
-  | App (a, b) ->
-    to_constr env a >>= fun a ->
-    to_constr env b >>= fun b -> ret (mkApp (a, [| b |]))
-  | Let { name; ty; v; rest } ->
-    to_constr env ty >>= fun ty ->
-    to_annot env name ty >>= fun name ->
-    to_constr env v >>= fun v ->
-    to_constr (push_rel (LocalDef (name, v, ty)) env) rest >>= fun rest ->
-    ret (mkLetIn (name, v, ty, rest))
-  | Lam (_bk, n, a, b) ->
-    to_constr env a >>= fun a ->
-    to_annot env n a >>= fun n ->
-    to_constr (push_rel (LocalAssum (n, a)) env) b >>= fun b ->
-    ret (mkLambda (n, a, b))
-  | Pi (_bk, n, a, b) ->
-    to_constr env a >>= fun a ->
-    to_annot env n a >>= fun n ->
-    to_constr (push_rel (LocalAssum (n, a)) env) b >>= fun b ->
-    ret (mkProd (n, a, b))
-  | Proj (lean_ind, field, c) ->
-    to_constr env c >>= fun c ->
-    get_uconv >>= fun uconv ->
-    (* we retype to get the ind, because otherwise we need the lean
+    | Bound i -> ret (mkRel (i + 1))
+    | Sort univ ->
+      to_univ_level' univ >>= fun u -> ret (mkSort (sort_of_level u))
+    | Const (n, univs) -> instantiate n univs
+    | App (a, b) ->
+      to_constr env a >>= fun a ->
+      to_constr env b >>= fun b -> ret (mkApp (a, [| b |]))
+    | Let { name; ty; v; rest } ->
+      to_constr env ty >>= fun ty ->
+      to_annot env name ty >>= fun name ->
+      to_constr env v >>= fun v ->
+      to_constr (push_rel (LocalDef (name, v, ty)) env) rest >>= fun rest ->
+      ret (mkLetIn (name, v, ty, rest))
+    | Lam (_bk, n, a, b) ->
+      to_constr env a >>= fun a ->
+      to_annot env n a >>= fun n ->
+      to_constr (push_rel (LocalAssum (n, a)) env) b >>= fun b ->
+      ret (mkLambda (n, a, b))
+    | Pi (_bk, n, a, b) ->
+      to_constr env a >>= fun a ->
+      to_annot env n a >>= fun n ->
+      to_constr (push_rel (LocalAssum (n, a)) env) b >>= fun b ->
+      ret (mkProd (n, a, b))
+    | Proj (lean_ind, field, c) ->
+      to_constr env c >>= fun c ->
+      get_uconv >>= fun uconv ->
+      (* we retype to get the ind, because otherwise we need the lean
        univs for instantiation
        This means we ignore the lean_ind in the Proj data. *)
-    let c = with_env_evm env uconv (fun env evd () ->
-      let tc = Retyping.get_type_of env evd (EConstr.of_constr c) in
-      let tc, args = EConstr.decompose_app evd (Reductionops.whd_all env evd tc) in
-      let (ind, _) as indu = Constr.destInd (EConstr.Unsafe.to_constr tc) in
-      let mib = Global.lookup_mind (fst ind) in
-      begin match mib.mind_record with
-      | PrimRecord infos ->
-        let (p, r) = Declareops.inductive_make_projection ind mib ~proj_arg:field in
-        (* unfolded?? *)
-        mkProj (Projection.make p false, r, c)
-      | NotRecord | FakeRecord ->
-        if (mib.mind_packets.(snd ind).mind_relevance == EConstr.Unsafe.to_relevance EConstr.ERelevance.irrelevant)
-        then CErrors.user_err Pp.(str "TODO projection for non record Prop inductive")
-        else CErrors.user_err Pp.(str "cannot project non record " ++ N.pp lean_ind)
-      end)
-        ()
-    in
-    ret c
-  | Nat i ->
-    (* [nat_ints] is not synchronized so ensure Nat is instantiated *)
-    instantiate (N.append N.anon "Nat") [] >>= fun nat ->
-    let nat, _ = Constr.destInd nat in
-    ret (nat_int nat i)
-  | String _ -> CErrors.user_err Pp.(str "TODO native string")
+      let c =
+        with_env_evm env uconv
+          (fun env evd () ->
+            let tc = Retyping.get_type_of env evd (EConstr.of_constr c) in
+            let tc, args =
+              EConstr.decompose_app evd (Reductionops.whd_all env evd tc)
+            in
+            let ((ind, _) as indu) =
+              Constr.destInd (EConstr.Unsafe.to_constr tc)
+            in
+            let mib = Global.lookup_mind (fst ind) in
+            begin
+              match mib.mind_record with
+              | PrimRecord infos ->
+                let p, r =
+                  Declareops.inductive_make_projection ind mib ~proj_arg:field
+                in
+                (* unfolded?? *)
+                mkProj (Projection.make p false, r, c)
+              | NotRecord | FakeRecord ->
+                if
+                  mib.mind_packets.(snd ind).mind_relevance
+                  == EConstr.Unsafe.to_relevance EConstr.ERelevance.irrelevant
+                then
+                  CErrors.user_err
+                    Pp.(str "TODO projection for non record Prop inductive")
+                else
+                  CErrors.user_err
+                    Pp.(str "cannot project non record " ++ N.pp lean_ind)
+            end)
+          ()
+      in
+      ret c
+    | Nat i ->
+      (* [nat_ints] is not synchronized so ensure Nat is instantiated *)
+      instantiate (N.append N.anon "Nat") [] >>= fun nat ->
+      let nat, _ = Constr.destInd nat in
+      ret (nat_int nat i)
+    | String _ -> CErrors.user_err Pp.(str "TODO native string")
 
 and instantiate n univs uconv =
   assert (List.length univs < Sys.int_size);
@@ -978,9 +972,10 @@ and instantiate n univs uconv =
   let i, univs = int_of_univs univs in
   let inst = ensure_exists n i in
   let subst l =
-    let u = match Level.var_index l with
-    | None -> Universe.make l
-    | Some n -> List.nth univs n
+    let u =
+      match Level.var_index l with
+      | None -> Universe.make l
+      | Some n -> List.nth univs n
     in
     Some u
   in
@@ -1008,17 +1003,27 @@ and ensure_exists n i =
     | Ax ax -> declare_ax n ax i
     | Ind ind -> declare_ind n ind i
     | Quot -> CErrors.user_err Pp.(str "quot must be predeclared")
-    | exception Not_found -> CErrors.user_err Pp.(str "missing "++N.pp n ))
+    | exception Not_found -> CErrors.user_err Pp.(str "missing " ++ N.pp n))
 
 and declare_def n { ty; body; univs; height } i =
   let uconv = start_uconv univs i in
   let uconv, ty = to_constr empty_env ty uconv in
   let uconv, body = to_constr empty_env body uconv in
   let univs, algs = univ_entry uconv univs in
-  let ref = try quickdef ~name:(name_for n i) ~types:(Some ty) ~univs body
+  let ref =
+    try quickdef ~name:(name_for n i) ~types:(Some ty) ~univs body
     with e ->
       let e = Exninfo.capture e in
-      Feedback.msg_info Pp.(str "Failed with" ++ fnl() ++ Printer.pr_constr_env (Global.env()) (Evd.from_env (Global.env())) body ++ fnl() ++ str ": " ++ Printer.pr_constr_env (Global.env()) (Evd.from_env (Global.env())) ty);
+      Feedback.msg_info
+        Pp.(
+          str "Failed with" ++ fnl ()
+          ++ Printer.pr_constr_env (Global.env ())
+               (Evd.from_env (Global.env ()))
+               body
+          ++ fnl () ++ str ": "
+          ++ Printer.pr_constr_env (Global.env ())
+               (Evd.from_env (Global.env ()))
+               ty);
       Exninfo.iraise e
   in
   let () =
@@ -1046,12 +1051,12 @@ and declare_ax n { ty; univs } i =
 and to_params uconv params =
   let acc, params =
     CList.fold_left_map
-      (fun (env,uconv) (_bk, p, ty) ->
-         let uconv, ty = to_constr env ty uconv in
-         let d = RelDecl.LocalAssum (to_annot env p ty uconv, ty) in
-         let env = Environ.push_rel_context_val d env in
-         ((env,uconv), d))
-      (empty_env,uconv) params
+      (fun (env, uconv) (_bk, p, ty) ->
+        let uconv, ty = to_constr env ty uconv in
+        let d = RelDecl.LocalAssum (to_annot env p ty uconv, ty) in
+        let env = Environ.push_rel_context_val d env in
+        ((env, uconv), d))
+      (empty_env, uconv) params
   in
   (acc, List.rev params)
 
@@ -1069,7 +1074,8 @@ and declare_ind n { params; ty; ctors; univs } i =
       let univs =
         match i with
         | 0 ->
-          UContext.make ([||], [| Name (Id.of_string "u") |])
+          UContext.make
+            ([||], [| Name (Id.of_string "u") |])
             ( Instance.of_array ([||], [| univ_of_name (N.append N.anon "u") |]),
               Constraints.empty )
         | 1 -> UContext.empty
@@ -1078,7 +1084,7 @@ and declare_ind n { params; ty; ctors; univs } i =
       (mind, [], ind_name, [ cname ], univs, squashy)
     | None ->
       let uconv = start_uconv univs i in
-      let (env_params,uconv), params = to_params uconv params in
+      let (env_params, uconv), params = to_params uconv params in
       let uconv, ty = to_constr env_params ty uconv in
       let indices, sort =
         let env_params =
@@ -1087,11 +1093,11 @@ and declare_ind n { params; ty; ctors; univs } i =
         in
         Reduction.dest_arity env_params ty
       in
-      let env_ind = Environ.push_rel_context_val
+      let env_ind =
+        Environ.push_rel_context_val
           (LocalAssum
-             ((Context.make_annot (N.to_name n)
-                 (Sorts.relevance_of_sort sort)),
-              Term.it_mkProd_or_LetIn ty params))
+             ( Context.make_annot (N.to_name n) (Sorts.relevance_of_sort sort),
+               Term.it_mkProd_or_LetIn ty params ))
           empty_env
       in
       let env_ind_params =
@@ -1109,32 +1115,51 @@ and declare_ind n { params; ty; ctors; univs } i =
       let graph = uconv.graph in
       let univs, algs = univ_entry_gen uconv univs in
       let ind_name = name_for n i in
-      let record, fields, ctys = match indices, ctys with
-        | [], [cty] -> cty |> with_env_evm env_ind_params uconv (fun env evm cty ->
-            let fields, codom = Reductionops.whd_decompose_prod env evm (EConstr.of_constr cty) in
-            let _, fields = List.fold_left_map (fun ids (na, t) ->
-                match na.Context.binder_name with
-                | Names.Anonymous -> ids, (na, t)
-                | Names.Name id ->
-                  let id = Namegen.next_global_ident_away id ids in
-                  let ids = Id.Set.add id ids in
-                  line_msg (N.of_list [Names.Id.to_string id; "(field)"; Names.Id.to_string ind_name]);
-                  ids, ({ na with binder_name = Names.Name id}, t))
-                (Id.Set.add ind_name Id.Set.empty)
-                fields
-            in
-            let cty' = EConstr.it_mkProd codom fields in
-            let cty' = EConstr.Unsafe.to_constr cty' in
-            match fields, Sorts.is_sprop sort with
-            | [], true -> None, [], ctys
-            | _ :: _, false -> Some (Some [|default_proj_id|]), fields, [cty']
-            | [], false -> None, [], ctys
-            | _ :: _, true ->
-              if List.for_all (fun (na,_) -> na.Context.binder_relevance == EConstr.ERelevance.irrelevant) fields
-              then Some (Some [|default_proj_id|]), fields, [cty']
-              else None, [], ctys
-          )
-        | _ -> None, [], ctys
+      let record, fields, ctys =
+        match (indices, ctys) with
+        | [], [ cty ] ->
+          cty
+          |> with_env_evm env_ind_params uconv (fun env evm cty ->
+                 let fields, codom =
+                   Reductionops.whd_decompose_prod env evm
+                     (EConstr.of_constr cty)
+                 in
+                 let _, fields =
+                   List.fold_left_map
+                     (fun ids (na, t) ->
+                       match na.Context.binder_name with
+                       | Names.Anonymous -> (ids, (na, t))
+                       | Names.Name id ->
+                         let id = Namegen.next_global_ident_away id ids in
+                         let ids = Id.Set.add id ids in
+                         line_msg
+                           (N.of_list
+                              [
+                                Names.Id.to_string id;
+                                "(field)";
+                                Names.Id.to_string ind_name;
+                              ]);
+                         (ids, ({ na with binder_name = Names.Name id }, t)))
+                     (Id.Set.add ind_name Id.Set.empty)
+                     fields
+                 in
+                 let cty' = EConstr.it_mkProd codom fields in
+                 let cty' = EConstr.Unsafe.to_constr cty' in
+                 match (fields, Sorts.is_sprop sort) with
+                 | [], true -> (None, [], ctys)
+                 | _ :: _, false ->
+                   (Some (Some [| default_proj_id |]), fields, [ cty' ])
+                 | [], false -> (None, [], ctys)
+                 | _ :: _, true ->
+                   if
+                     List.for_all
+                       (fun (na, _) ->
+                         na.Context.binder_relevance
+                         == EConstr.ERelevance.irrelevant)
+                       fields
+                   then (Some (Some [| default_proj_id |]), fields, [ cty' ])
+                   else (None, [], ctys))
+        | _ -> (None, [], ctys)
       in
       let entry finite =
         {
@@ -1163,14 +1188,10 @@ and declare_ind n { params; ty; ctors; univs } i =
         let act finite =
           DeclareInd.declare_mutual_inductive_with_eliminations (entry finite)
             (* the ubinders API is kind of shit here *)
-            (UState.Polymorphic_entry UContext.empty,UnivNames.empty_binders)
-            []
-            ~primitive_expected:(Option.has_some record)
+            (UState.Polymorphic_entry UContext.empty, UnivNames.empty_binders)
+            [] ~primitive_expected:(Option.has_some record)
         in
-        let act () =
-          try
-            act BiFinite
-          with e -> act Finite in
+        let act () = try act BiFinite with e -> act Finite in
         if squashy.lean_squashes || not coq_squashes then act ()
         else with_unsafe_univs act ()
       in
@@ -1181,13 +1202,30 @@ and declare_ind n { params; ty; ctors; univs } i =
       let () =
         match record with
         | Some (Some _) ->
-            let inhabitant_id = ind_name in
-            let projections_kind = Decls.StructureComponent in
-            let proj_flags = List.map (fun _ -> { Record.Internal.pf_coercion = false; pf_reversible = false; pf_instance = false; pf_priority = None; pf_locality = Goptions.OptDefault; pf_canonical = false }) fields in
-            let implfs = List.map (fun _ -> []) fields in
-            let fields = List.map (fun (na,t) -> RelDecl.LocalAssum (na, t)) fields in
-            let fields = EConstr.Unsafe.to_rel_context fields in
-            ignore(Record.Internal.declare_projections (mind, 0) (Entries.Polymorphic_entry univs, UnivNames.empty_binders) ~kind:projections_kind inhabitant_id proj_flags implfs fields)
+          let inhabitant_id = ind_name in
+          let projections_kind = Decls.StructureComponent in
+          let proj_flags =
+            List.map
+              (fun _ ->
+                {
+                  Record.Internal.pf_coercion = false;
+                  pf_reversible = false;
+                  pf_instance = false;
+                  pf_priority = None;
+                  pf_locality = Goptions.OptDefault;
+                  pf_canonical = false;
+                })
+              fields
+          in
+          let implfs = List.map (fun _ -> []) fields in
+          let fields =
+            List.map (fun (na, t) -> RelDecl.LocalAssum (na, t)) fields
+          in
+          let fields = EConstr.Unsafe.to_rel_context fields in
+          ignore
+            (Record.Internal.declare_projections (mind, 0)
+               (Entries.Polymorphic_entry univs, UnivNames.empty_binders)
+               ~kind:projections_kind inhabitant_id proj_flags implfs fields)
         | _ -> ()
       in
       (mind, algs, ind_name, cnames, univs, squashy)
@@ -1209,33 +1247,37 @@ and declare_ind n { params; ty; ctors; univs } i =
     let u =
       if fam = Sorts.InSProp then LSProp
       else
-      let u = if lean_fancy_univs () then
-          let u = DirPath.make [ Id.of_string "motive"; lean_id ] in
-          Level.(make (UGlobal.make u "" 0))
-        else UnivGen.fresh_level ()
-      in
-      Level u
+        let u =
+          if lean_fancy_univs () then
+            let u = DirPath.make [ Id.of_string "motive"; lean_id ] in
+            Level.(make (UGlobal.make u "" 0))
+          else UnivGen.fresh_level ()
+        in
+        Level u
     in
     let env = Environ.push_context ~strict:true univs (Global.env ()) in
     let env =
       match u with
       | LSProp -> env
-      | Level u -> Environ.push_context_set ~strict:false (ContextSet.singleton u) env
+      | Level u ->
+        Environ.push_context_set ~strict:false (ContextSet.singleton u) env
     in
     let inst, uentry =
       let inst = UContext.instance univs in
       let csts = UContext.constraints univs in
       let qnames, unames = UContext.names univs in
-      let uentry = match u with
+      let uentry =
+        match u with
         | LSProp -> UState.Polymorphic_entry univs
         | Level u ->
           UState.Polymorphic_entry
-            (UContext.make (qnames, Array.append [| Name (Id.of_string "motive") |] unames)
+            (UContext.make
+               (qnames, Array.append [| Name (Id.of_string "motive") |] unames)
                ( Instance.of_array
                    ([||], Array.append [| u |] (snd (Instance.to_array inst))),
-                 csts ) )
+                 csts ))
       in
-      ( inst, uentry )
+      (inst, uentry)
     in
     (* lean 4 change: always dep? was not squashy.always_prop*)
     (lean_scheme env ~dep:true mind inst u, uentry)
@@ -1250,15 +1292,18 @@ and declare_ind n { params; ty; ctors; univs } i =
     let id = Id.of_string (Id.to_string ind_name ^ suffix) in
     let body, uentry = make_scheme sort in
     let elim =
-      quickdef ~name:id ~types:None ~univs:(uentry, UnivNames.empty_binders) body
+      quickdef ~name:id ~types:None
+        ~univs:(uentry, UnivNames.empty_binders)
+        body
       (* TODO implicits? *)
     in
     (* TODO AFAICT Lean reduces recursors eagerly, but ofc only when applied to a ctor
        Can we simulate that with strategy better than by leaving them at the default strat? *)
     let liftu l =
-      let u = match Level.var_index l with
-      | None -> Universe.make l (* Set *)
-      | Some i -> Universe.make (Level.var (i + 1))
+      let u =
+        match Level.var_index l with
+        | None -> Universe.make l (* Set *)
+        | Some i -> Universe.make (Level.var (i + 1))
       in
       Some u
     in
@@ -1276,7 +1321,9 @@ and declare_ind n { params; ty; ctors; univs } i =
   in
   let () =
     List.iter
-      (fun x -> try declare_one_scheme x with e when CErrors.noncritical e && error_mode e = Skip ->
+      (fun x ->
+        try declare_one_scheme x
+        with e when CErrors.noncritical e && error_mode e = Skip ->
           Feedback.msg_info Pp.(str "Skipping scheme"))
       elims
   in
@@ -1288,7 +1335,7 @@ let squashify n { params; ty; ctors; univs } =
     (* NB: if univs = [] this is just instantiation 0 *)
     start_uconv univs ((1 lsl List.length univs) - 1)
   in
-  let (env_paramsP,uconvP), paramsP = to_params uconvP params in
+  let (env_paramsP, uconvP), paramsP = to_params uconvP params in
   let uconvP, tyP = to_constr env_paramsP ty uconvP in
   let envP =
     Environ.push_rel_context paramsP
@@ -1298,7 +1345,7 @@ let squashify n { params; ty; ctors; univs } =
   if not (Sorts.is_sprop sortP) then noprop
   else
     let uconvT = start_uconv univs 0 in
-    let (env_paramsT,uconvT), paramsT = to_params uconvT params in
+    let (env_paramsT, uconvT), paramsT = to_params uconvT params in
     let uconvT, tyT = to_constr env_paramsT ty uconvT in
     let envT =
       Environ.set_rel_context_val env_paramsT
@@ -1312,12 +1359,13 @@ let squashify n { params; ty; ctors; univs } =
     | [ (_, ctor) ] ->
       let envT =
         Context.Rel.fold_outside Environ.push_rel_context_val paramsT
-          ~init:(Environ.push_rel_context_val
-                   (LocalAssum
-                      (Context.make_annot (N.to_name n)
-                         (Sorts.relevance_of_sort sortT),
-                       Term.it_mkProd_or_LetIn tyT paramsT))
-                   empty_env)
+          ~init:
+            (Environ.push_rel_context_val
+               (LocalAssum
+                  ( Context.make_annot (N.to_name n)
+                      (Sorts.relevance_of_sort sortT),
+                    Term.it_mkProd_or_LetIn tyT paramsT ))
+               empty_env)
       in
       let uconvT, ctorT = to_constr envT ctor uconvT in
       let envT =
@@ -1446,8 +1494,8 @@ let rec do_ctors state nctors acc l =
       do_ctors state (nctors - 1) ((name, ty) :: acc) rest
     | _ -> CErrors.user_err Pp.(str "Not enough constructors")
 
-(** Replace [n] (meant to be an the inductive type appearing in the
-    constructor type) by (Bound k). *)
+(** Replace [n] (meant to be an the inductive type appearing in the constructor
+    type) by (Bound k). *)
 let rec replace_ind ind k = function
   | Const (n', _) when N.equal ind n' -> Bound k
   | (Const _ | Bound _ | Sort _) as e -> e
@@ -1464,9 +1512,8 @@ let rec replace_ind ind k = function
     Lam (bk, name, replace_ind ind k a, replace_ind ind (k + 1) b)
   | Pi (bk, name, a, b) ->
     Pi (bk, name, replace_ind ind k a, replace_ind ind (k + 1) b)
-  | Proj (n, field, c) ->
-    Proj (n, field, replace_ind ind k c)
-  | Nat _ | String _ as x -> x
+  | Proj (n, field, c) -> Proj (n, field, replace_ind ind k c)
+  | (Nat _ | String _) as x -> x
 
 let rec pop_params npar ty =
   if npar = 0 then ([], ty)
@@ -1486,8 +1533,7 @@ let as_univ state s = RRange.get state.univs (int_of_string s)
 let { Goptions.get = just_parse } =
   Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Just"; "Parsing" ]
-    ~value:false
-    ()
+    ~value:false ()
 
 (* with this off: best line 23000 in stdlib
    stack overflow
@@ -1497,14 +1543,12 @@ let { Goptions.get = just_parse } =
 let { Goptions.get = upfront_instances } =
   Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Upfront"; "Instantiation" ]
-    ~value:false
-    ()
+    ~value:false ()
 
 let { Goptions.get = lazy_instances } =
   Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Lazy"; "Instantiation" ]
-    ~value:false
-    ()
+    ~value:false ()
 
 let declare_instances act univs =
   let stop = if upfront_instances () then 1 lsl List.length univs else 1 in
@@ -1545,7 +1589,7 @@ let parse_hexa c =
 
 let parse_char s =
   assert (String.length s = 2);
-  Char.chr (parse_hexa s.[0] * 16 + parse_hexa s.[1])
+  Char.chr ((parse_hexa s.[0] * 16) + parse_hexa s.[1])
 
 let do_line state l =
   (* Lean printing strangeness: sometimes we get double spaces (typically with INFIX) *)
@@ -1602,8 +1646,10 @@ let do_line state l =
         Pp.(
           str "bad notation: " ++ prlist_with_sep (fun () -> str "; ") str rest))
   | next :: rest ->
-    let next = try int_of_string next
-      with Failure _ -> CErrors.user_err Pp.(str "Unknown start of line " ++ str next)
+    let next =
+      try int_of_string next
+      with Failure _ ->
+        CErrors.user_err Pp.(str "Unknown start of line " ++ str next)
     in
     let state =
       match rest with
@@ -1683,7 +1729,10 @@ let do_line state l =
         let ind = get_name state ind
         and field = int_of_string field
         and term = get_expr state term in
-        { state with exprs = RRange.append state.exprs (Proj (ind, field, term)) }
+        {
+          state with
+          exprs = RRange.append state.exprs (Proj (ind, field, term));
+        }
       | [ "#ELN"; n ] ->
         let n = Z.of_string n in
         { state with exprs = RRange.append state.exprs (Nat n) }
@@ -1705,8 +1754,7 @@ let rec is_arity = function
 let { Goptions.get = print_squashes } =
   Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Print"; "Squash"; "Info" ]
-    ~value:false
-    ()
+    ~value:false ()
 
 let finish state =
   let max_univs, cnt =
@@ -1741,8 +1789,8 @@ let finish state =
       ++ int (N.Map.cardinal !entries)
       ++ str " entries (" ++ int cnt ++ str " possible instances)"
       ++ (if N.Map.exists (fun _ x -> Quot == x) !entries then
-          str " (including quot)."
-         else str ".")
+            str " (including quot)."
+          else str ".")
       ++ fnl () ++ str "- "
       ++ int (RRange.length state.univs)
       ++ str " universe expressions"
@@ -1752,7 +1800,7 @@ let finish state =
       ++ int (RRange.length state.exprs)
       ++ str " expression nodes" ++ fnl ()
       ++ (if state.skips > 0 then str "Skipped " ++ int state.skips ++ fnl ()
-         else mt ())
+          else mt ())
       ++ str "Max universe instance length "
       ++ int max_univs ++ str "." ++ fnl () ++ int nonarities
       ++ str " inductives have non syntactically arity types."
@@ -1798,14 +1846,11 @@ let do_line state l =
   | exception e ->
     let e = Exninfo.capture e in
     (if fst e <> TimedOut then
-     let t1 = System.get_time () in
-     prtime t0 t1);
+       let t1 = System.get_time () in
+       prtime t0 t1);
     Exninfo.iraise e
 
-
-
 let before_from = function None -> false | Some from -> !lcnt < from
-
 let freeze () = (Lib.Interp.freeze (), Summary.Interp.freeze_summaries ())
 
 let unfreeze (lib, sum) =
@@ -1844,19 +1889,18 @@ let rec do_input state ~from ~until ch =
         | exception e ->
           let e = Exninfo.capture e in
           let epp =
-              Pp.(str "Error at line " ++ int !lcnt
-                  ++ str " (for " ++ N.pp n ++ str ")"
-                  ++ str (": " ^ l)
-                  ++ fnl () ++ CErrors.iprint e)
+            Pp.(
+              str "Error at line " ++ int !lcnt ++ str " (for " ++ N.pp n
+              ++ str ")"
+              ++ str (": " ^ l)
+              ++ fnl () ++ CErrors.iprint e)
           in
           unfreeze st;
           (* without this unfreeze, the global state.declared and the
              global env are out of sync *)
-          match error_mode (fst e) with
+          (match error_mode (fst e) with
           | Skip ->
-            Feedback.msg_info
-              Pp.(
-                str "Skipping: " ++ epp);
+            Feedback.msg_info Pp.(str "Skipping: " ++ epp);
             incr lcnt;
             do_input { state with skips = state.skips + 1 } ~from ~until ch
           | Stop ->
@@ -1867,12 +1911,12 @@ let rec do_input state ~from ~until ch =
           | Fail ->
             close_in ch;
             finish state;
-            CErrors.user_err epp))
+            CErrors.user_err epp)))
 
 let pstate = Summary.ref ~name:"lean-parse-state" empty_state
 
 let lean_obj =
-  let cache (pstatev,setsv,declaredv,entriesv,squash_infov) =
+  let cache (pstatev, setsv, declaredv, entriesv, squash_infov) =
     pstate := pstatev;
     sets := setsv;
     declared := declaredv;
@@ -1881,15 +1925,18 @@ let lean_obj =
     ()
   in
   let open Libobject in
-  declare_object {
-    (default_object "LEAN-IMPORT-STATE") with
-    cache_function = cache;
-    load_function = (fun _ v -> cache v);
-    classify_function = (fun _ -> Keep);
-  }
+  declare_object
+    {
+      (default_object "LEAN-IMPORT-STATE") with
+      cache_function = cache;
+      load_function = (fun _ v -> cache v);
+      classify_function = (fun _ -> Keep);
+    }
 
 let import ~from ~until f =
   lcnt := 1;
   (* silence the definition messages from Coq *)
-  let pstatev = (Flags.silently (fun () -> do_input !pstate ~from ~until (open_in f)) ()) in
+  let pstatev =
+    Flags.silently (fun () -> do_input !pstate ~from ~until (open_in f)) ()
+  in
   Lib.add_leaf (lean_obj (pstatev, !sets, !declared, !entries, !squash_info))
