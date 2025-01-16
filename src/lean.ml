@@ -778,8 +778,8 @@ let name_for n i =
     let base = if i = 0 then base else Id.of_string (Id.to_string base ^ "_") in
     Namegen.next_global_ident_away base Id.Set.empty
 
-let get_predeclared_eq n i =
-  if N.equal n (N.append N.anon "eq") then
+let get_predeclared_ind indn n i =
+  if N.equal n (N.append N.anon indn) then
     let ind_name = name_for_core n i in
     let reg = "lean." ^ Id.to_string ind_name in
     match Rocqlib.lib_ref reg with
@@ -792,6 +792,23 @@ let get_predeclared_eq n i =
           ++ str " expected an inductive.")
     | exception _ -> None
   else None
+
+let get_predeclared_const const n i =
+  if N.equal n (N.append N.anon const) then
+    let const_name = name_for_core n i in
+    let reg = "lean." ^ Id.to_string const_name in
+    match Rocqlib.lib_ref reg with
+    | ConstRef c -> Some (const_name, c)
+    | _ ->
+      CErrors.user_err
+        Pp.(
+          str "Bad registration for " ++ str reg ++ str " expected a constant.")
+    | exception _ -> None
+  else None
+
+let get_predeclared_eq n i = get_predeclared_ind "eq" n i
+let get_predeclared_nat n i = get_predeclared_ind "Nat" n i
+let _get_predeclared_nat_double n = get_predeclared_const "Nat_dobule" n 0
 
 (** For each name, the instantiation with all non-sprop univs should always be
     declared, but the instantiations with SProp may be lazily declared. We
@@ -1062,8 +1079,8 @@ and to_params uconv params =
 
 and declare_ind n { params; ty; ctors; univs } i =
   let mind, algs, ind_name, cnames, univs, squashy =
-    match get_predeclared_eq n i with
-    | Some (ind_name, mind) ->
+    match (get_predeclared_eq n i, get_predeclared_nat n i) with
+    | Some (ind_name, mind), _ ->
       (* Hack to let the user predeclare eq and quot before running Lean Import
          TODO make a more general Register-like API? *)
       Feedback.msg_info Pp.(Id.print ind_name ++ str " is predeclared");
@@ -1082,7 +1099,17 @@ and declare_ind n { params; ty; ctors; univs } i =
         | _ -> assert false
       in
       (mind, [], ind_name, [ cname ], univs, squashy)
-    | None ->
+    | _, Some (ind_name, mind) ->
+      (* Hack to let the user predeclare nat before running Lean Import
+         TODO make a more general Register-like API? *)
+      Feedback.msg_info Pp.(Id.print ind_name ++ str " is predeclared");
+      let cname_zero = N.append n "zero" in
+      let cname_succ = N.append n "succ" in
+      let squashy =
+        { maybe_prop = false; always_prop = false; lean_squashes = false }
+      in
+      (mind, [], ind_name, [ cname_zero; cname_succ ], UContext.empty, squashy)
+    | None, None ->
       let uconv = start_uconv univs i in
       let (env_params, uconv), params = to_params uconv params in
       let uconv, ty = to_constr env_params ty uconv in

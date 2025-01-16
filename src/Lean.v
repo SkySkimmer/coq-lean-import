@@ -73,3 +73,15 @@ Module Quot.
   Register ind_inst1 as lean.quot.ind_inst1.
 
 End Quot.
+
+Inductive Nat := Nat_zero : Nat | Nat_succ : Nat -> Nat.
+
+Register Nat as lean.nat.
+
+Fixpoint double (n : Nat) : Nat :=
+  match n with
+  | Nat_zero => Nat_zero
+  | Nat_succ n => Nat_succ (Nat_succ (double n))
+  end.
+
+Register double as lean.Nat_double.
