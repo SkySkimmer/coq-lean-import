@@ -251,6 +251,7 @@ module LeanName : sig
   val anon : t
   val of_list : string list -> t [@@warning "-32"]
   val append : t -> string -> t
+  val append_list : t -> string list -> t
   val equal : t -> t -> bool
 
   val raw_append : t -> string -> t
@@ -278,6 +279,7 @@ end = struct
       s toclean
 
   let append a b = clean_string b :: a
+  let append_list a bs = List.append (List.rev_map clean_string bs) a
   let raw_append a b = match a with [] -> [ b ] | hd :: tl -> (hd ^ b) :: tl
   let to_id (x : t) = Id.of_string (String.concat "_" (List.rev x))
   let to_name x = if x = [] then Anonymous else Name (to_id x)
@@ -779,7 +781,7 @@ let name_for n i =
     Namegen.next_global_ident_away base Id.Set.empty
 
 let get_predeclared_ind indn n i =
-  if N.equal n (N.append N.anon indn) then
+  if N.equal n (N.append_list N.anon indn) then
     let ind_name = name_for_core n i in
     let reg = "lean." ^ Id.to_string ind_name in
     match Rocqlib.lib_ref reg with
@@ -793,9 +795,78 @@ let get_predeclared_ind indn n i =
     | exception _ -> None
   else None
 
+let get_predeclared_def defn n i =
+  if N.equal n (N.append_list N.anon defn) then
+    let def_name = name_for_core n i in
+    let reg = "lean." ^ Id.to_string def_name in
+    match Rocqlib.lib_ref reg with
+    | ConstRef c -> Some (def_name, c)
+    | _ ->
+      CErrors.user_err
+        Pp.(
+          str "Bad registration for " ++ str reg ++ str " expected a constant.")
+    | exception _ -> None
+  else None
 
-let get_predeclared_eq n i = get_predeclared_ind "eq" n i
-let get_predeclared_nat n i = get_predeclared_ind "Nat" n i
+type predeclared_ind_kind = Eq | Nat | Nat_le | Or | And | Fin | UInt32 | Char
+type predeclared_def_kind = UInt32_size | Nat_isValidChar
+
+let get_predeclared_cnames (k : predeclared_ind_kind) n =
+  match k with
+  | Eq -> [ N.append n "refl" ]
+  | Nat -> [ N.append n "zero"; N.append n "succ" ]
+  | Nat_le -> [ N.append n "refl"; N.append n "step" ]
+  | Or -> [ N.append n "inl"; N.append n "inr" ]
+  | And -> [ N.append n "intro" ]
+  | Fin -> [ N.append n "mk" ]
+  | UInt32 -> [ N.append n "mk" ]
+  | Char -> [ N.append n "mk" ]
+
+let get_predeclared_ind_any n i =
+  List.filter_map
+    (fun (indk, indh) ->
+      get_predeclared_ind indh n i |> Option.map (fun x -> (indk, indh, x)))
+    [
+      (Eq, [ "eq" ]);
+      (Nat, [ "Nat" ]);
+      (Nat_le, [ "Nat"; "le" ]);
+      (Or, [ "Or" ]);
+      (And, [ "And" ]);
+      (Fin, [ "Fin" ]);
+      (UInt32, [ "UInt32" ]);
+      (Char, [ "Char" ]);
+    ]
+
+let get_predeclared_ind_some n i =
+  match get_predeclared_ind_any n i with
+  | [] -> None
+  | [ x ] -> Some x
+  | _ :: _ :: _ ->
+    CErrors.user_err
+      Pp.(str "Multiple predeclared inductive types for " ++ N.pp n)
+
+let get_predeclared_def_any n i =
+  List.filter_map
+    (fun (defk, defh) ->
+      get_predeclared_def defh n i |> Option.map (fun x -> (defk, defh, x)))
+    [
+      (UInt32_size, [ "UInt32"; "size" ]);
+      (Nat_isValidChar, [ "Nat"; "isValidChar" ]);
+    ]
+
+let get_predeclared_def_some n i =
+  match get_predeclared_def_any n i with
+  | [] -> None
+  | [ x ] -> Some x
+  | _ :: _ :: _ ->
+    CErrors.user_err Pp.(str "Multiple predeclared constants for " ++ N.pp n)
+
+(* let get_predeclared_eq n i = get_predeclared_ind "eq" n i *)
+let mk_char_prim = "Char.mk.reflective_prim"
+
+(*
+Register Nat_isValidChar as lean.Nat_isValidChar.
+Register reflective_Char_mk_prim as lean.Char.mk.reflective_prim. *)
 let nat_double = "Nat_double"
 
 (** For each name, the instantiation with all non-sprop univs should always be
@@ -912,6 +983,17 @@ let nat_int nat double i =
     ZMap.get i !nat_ints
   end
 
+let mk_string char string mkChar s =
+  CErrors.user_err Pp.(str "TODO native string " ++ str s)
+  (* let rec mk_string_rec i =
+    if i = String.length s then string
+    else
+      let c = s.[i] in
+      let c = Constr.mkApp (mkChar, [| Constr.mkInt (Char.code c) |]) in
+      Constr.mkApp (string, [| c; mk_string_rec (i + 1) |])
+  in
+  mk_string_rec 0 *)
+
 let lcnt = ref 0
 
 let line_msg name =
@@ -1005,7 +1087,25 @@ let rec to_constr =
           ()
       in
       ret (nat_int nat double i)
-    | String _ -> CErrors.user_err Pp.(str "TODO native string")
+    | String s ->
+      instantiate (N.append N.anon "Char") [] >>= fun char ->
+      let char, _ = Constr.destInd char in
+      instantiate (N.append N.anon "String") [] >>= fun string ->
+      let string, _ = Constr.destInd string in
+      (* instantiate (N.append N.anon "List") [] >>= fun string -> *)
+      (* let string, _ = Constr.destInd string in *)
+      get_uconv >>= fun uconv ->
+      let mkChar =
+        with_env_evm env uconv
+          (fun env evd () ->
+            let _, mkChar =
+              Evd.fresh_global env evd
+                (Rocqlib.lib_ref ("lean." ^ mk_char_prim))
+            in
+            EConstr.to_constr evd mkChar)
+          ()
+      in
+      ret (mk_string char string mkChar s)
 
 and instantiate n univs uconv =
   assert (List.length univs < Sys.int_size);
@@ -1048,25 +1148,35 @@ and ensure_exists n i =
     | exception Not_found -> CErrors.user_err Pp.(str "missing " ++ N.pp n))
 
 and declare_def n { ty; body; univs; height } i =
-  let uconv = start_uconv univs i in
-  let uconv, ty = to_constr empty_env ty uconv in
-  let uconv, body = to_constr empty_env body uconv in
-  let univs, algs = univ_entry uconv univs in
-  let ref =
-    try quickdef ~name:(name_for n i) ~types:(Some ty) ~univs body
-    with e ->
-      let e = Exninfo.capture e in
-      Feedback.msg_info
-        Pp.(
-          str "Failed with" ++ fnl ()
-          ++ Printer.pr_constr_env (Global.env ())
-               (Evd.from_env (Global.env ()))
-               body
-          ++ fnl () ++ str ": "
-          ++ Printer.pr_constr_env (Global.env ())
-               (Evd.from_env (Global.env ()))
-               ty);
-      Exninfo.iraise e
+  let ref, algs =
+    match get_predeclared_def_some n i with
+    | Some ((UInt32_size | Nat_isValidChar), _, (def_name, c)) ->
+      (* Hack to let the user predeclare some constants
+         TODO make a more general Register-like API? *)
+      Feedback.msg_info Pp.(Id.print def_name ++ str " is predeclared");
+      (GlobRef.ConstRef c, [])
+    | None ->
+      let uconv = start_uconv univs i in
+      let uconv, ty = to_constr empty_env ty uconv in
+      let uconv, body = to_constr empty_env body uconv in
+      let univs, algs = univ_entry uconv univs in
+      let ref =
+        try quickdef ~name:(name_for n i) ~types:(Some ty) ~univs body
+        with e ->
+          let e = Exninfo.capture e in
+          Feedback.msg_info
+            Pp.(
+              str "Failed with" ++ fnl ()
+              ++ Printer.pr_constr_env (Global.env ())
+                   (Evd.from_env (Global.env ()))
+                   body
+              ++ fnl () ++ str ": "
+              ++ Printer.pr_constr_env (Global.env ())
+                   (Evd.from_env (Global.env ()))
+                   ty);
+          Exninfo.iraise e
+      in
+      (ref, algs)
   in
   let () =
     let c = match ref with ConstRef c -> c | _ -> assert false in
@@ -1104,8 +1214,8 @@ and to_params uconv params =
 
 and declare_ind n { params; ty; ctors; univs } i =
   let mind, algs, ind_name, cnames, univs, squashy =
-    match (get_predeclared_eq n i, get_predeclared_nat n i) with
-    | Some (ind_name, mind), _ ->
+    match get_predeclared_ind_some n i with
+    | Some (Eq, _, (ind_name, mind)) ->
       (* Hack to let the user predeclare eq and quot before running Lean Import
          TODO make a more general Register-like API? *)
       Feedback.msg_info Pp.(Id.print ind_name ++ str " is predeclared");
@@ -1124,17 +1234,18 @@ and declare_ind n { params; ty; ctors; univs } i =
         | _ -> assert false
       in
       (mind, [], ind_name, [ cname ], univs, squashy)
-    | _, Some (ind_name, mind) ->
-      (* Hack to let the user predeclare nat before running Lean Import
+    | Some
+        ( ((Nat | Nat_le | Or | And | Fin | UInt32 | Char) as k),
+          _,
+          (ind_name, mind) ) ->
+      (* Hack to let the user predeclare various types before running Lean Import
          TODO make a more general Register-like API? *)
+      (* this case is for the ones without universes*)
       Feedback.msg_info Pp.(Id.print ind_name ++ str " is predeclared");
-      let cname_zero = N.append n "zero" in
-      let cname_succ = N.append n "succ" in
-      let squashy =
-        { maybe_prop = false; always_prop = false; lean_squashes = false }
-      in
-      (mind, [], ind_name, [ cname_zero; cname_succ ], UContext.empty, squashy)
-    | None, None ->
+      let cnames = get_predeclared_cnames k n in
+      let squashy = N.Map.get n !squash_info in
+      (mind, [], ind_name, cnames, UContext.empty, squashy)
+    | None ->
       let uconv = start_uconv univs i in
       let (env_params, uconv), params = to_params uconv params in
       let uconv, ty = to_constr env_params ty uconv in
