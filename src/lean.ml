@@ -874,7 +874,7 @@ let one_more_int nat =
   nat_ints := ZMap.add i c !nat_ints;
   max_known_int := i
 
-let max_nat_int = Z.of_string "100000"
+let max_nat_int = Z.of_string "5000"
 
 let nat_int_binary nat double i =
   assert (Z.leq Z.zero i);
