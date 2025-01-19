@@ -1,4 +1,5 @@
 From Stdlib Require ZArith Lia ZifyBool Uint63.
+Declare ML Module "uutf".
 Declare ML Module "coq-lean-import.plugin".
 
 Set Universe Polymorphism.

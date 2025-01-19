@@ -983,16 +983,52 @@ let nat_int nat double i =
     ZMap.get i !nat_ints
   end
 
-let mk_string char string mkChar s =
-  CErrors.user_err Pp.(str "TODO native string " ++ str s)
-  (* let rec mk_string_rec i =
-    if i = String.length s then string
-    else
-      let c = s.[i] in
-      let c = Constr.mkApp (mkChar, [| Constr.mkInt (Char.code c) |]) in
-      Constr.mkApp (string, [| c; mk_string_rec (i + 1) |])
+(* Decode a UTF-8 string into a list of valid codepoints, with error reporting for bad characters *)
+let string_to_codepoints s =
+  (* Create a UTF-8 decoder for the input string *)
+  let decoder = Uutf.decoder ~encoding:`UTF_8 (`String s) in
+
+  (* Define the condition for filtering codepoints *)
+  let is_valid_codepoint n = n < 0xd800 || (0xdfff < n && n < 0x110000) in
+
+  (* Decode the string and collect valid codepoints *)
+  let rec collect_codepoints acc =
+    match Uutf.decode decoder with
+    | `Uchar u when is_valid_codepoint (Uchar.to_int u) ->
+      collect_codepoints (Uchar.to_int u :: acc)
+    | `Uchar u ->
+      (* Raise an exception with the problematic character *)
+      let bad_char = Printf.sprintf "U+%04X" (Uchar.to_int u) in
+      failwith (Printf.sprintf "Invalid codepoint: %s" bad_char)
+    | `End -> List.rev acc
+    | `Malformed s ->
+      (* Handle malformed UTF-8 sequences *)
+      failwith (Printf.sprintf "Malformed UTF-8 sequence: %S" s)
+    | `Await -> assert false (* This case should not occur for a string input *)
   in
-  mk_string_rec 0 *)
+  collect_codepoints []
+
+let mk_char mkChar (c : int) =
+  Constr.(mkApp (mkChar, [| mkInt (Uint63.of_int c) |]))
+
+let mk_list list uinst ty l =
+  let cNil = Constr.(mkApp (mkConstructU ((list, 1), uinst), [| ty |])) in
+  let cCons = Constr.mkConstructU ((list, 2), uinst) in
+  let rec mk_list_rec l =
+    match l with
+    | [] -> cNil
+    | hd :: tl -> Constr.mkApp (cCons, [| ty; hd; mk_list_rec tl |])
+  in
+  mk_list_rec l
+
+let mk_string char string list char_uinst mkChar s =
+  let codepoints =
+    try string_to_codepoints s
+    with Failure msg -> CErrors.user_err Pp.(str msg)
+  in
+  let chars = List.map (mk_char mkChar) codepoints in
+  let ls = mk_list list char_uinst char chars in
+  Constr.(mkApp ((mkConstructU ((string, 1), UVars.Instance.empty)), [| ls |]))
 
 let lcnt = ref 0
 
@@ -1089,11 +1125,11 @@ let rec to_constr =
       ret (nat_int nat double i)
     | String s ->
       instantiate (N.append N.anon "Char") [] >>= fun char ->
-      let char, _ = Constr.destInd char in
+      (* let char, _ = Constr.destInd char in *)
       instantiate (N.append N.anon "String") [] >>= fun string ->
       let string, _ = Constr.destInd string in
-      (* instantiate (N.append N.anon "List") [] >>= fun string -> *)
-      (* let string, _ = Constr.destInd string in *)
+      instantiate (N.append N.anon "List") [] >>= fun list ->
+      let list, _ = Constr.destInd list in
       get_uconv >>= fun uconv ->
       let mkChar =
         with_env_evm env uconv
@@ -1105,7 +1141,7 @@ let rec to_constr =
             EConstr.to_constr evd mkChar)
           ()
       in
-      ret (mk_string char string mkChar s)
+      ret (mk_string char string list UVars.Instance.empty mkChar s)
 
 and instantiate n univs uconv =
   assert (List.length univs < Sys.int_size);
