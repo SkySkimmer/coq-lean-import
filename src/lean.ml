@@ -271,12 +271,25 @@ end = struct
 
   let anon : t = []
   let of_list x = x
-  let toclean = [ ('@', "__at__"); ('?', "__q"); ('!', "__B") ]
+
+  let toclean =
+    [
+      ('@', "__at__");
+      ('?', "__q");
+      ('!', "__B");
+      ('\\', "__bs");
+      ('/', "__fs");
+      ('^', "__v");
+      ('(', "__o");
+      (')', "__c");
+      (':', "__co");
+      ('=', "__eq");
+    ]
 
   let clean_string s =
     List.fold_left
       (fun s (c, replace) -> String.concat replace (String.split_on_char c s))
-      s toclean
+      (Unicode.ascii_of_ident s) toclean
 
   let append a b = clean_string b :: a
   let append_list a bs = List.append (List.rev_map clean_string bs) a
@@ -984,7 +997,7 @@ let nat_int nat double i =
   end
 
 (* Decode a UTF-8 string into a list of valid codepoints, with error reporting for bad characters *)
-let string_to_codepoints s =
+(* let string_to_codepoints s =
   (* Create a UTF-8 decoder for the input string *)
   let decoder = Uutf.decoder ~encoding:`UTF_8 (`String s) in
 
@@ -996,17 +1009,55 @@ let string_to_codepoints s =
     match Uutf.decode decoder with
     | `Uchar u when is_valid_codepoint (Uchar.to_int u) ->
       collect_codepoints (Uchar.to_int u :: acc)
-    | `Uchar u ->
+    | `Uchar u when Uchar.to_int u >= 0x110000 ->
       (* Raise an exception with the problematic character *)
       let bad_char = Printf.sprintf "U+%04X" (Uchar.to_int u) in
-      failwith (Printf.sprintf "Invalid codepoint: %s" bad_char)
+      failwith (Printf.sprintf "Invalid codepoint (>= 0x110000): %s" bad_char)
+    | `Uchar u when Uchar.to_int u >= 0xd800 && 0xdfff >= Uchar.to_int u ->
+      (* Raise an exception with the problematic character *)
+      let bad_char = Printf.sprintf "U+%04X" (Uchar.to_int u) in
+      failwith
+        (Printf.sprintf "Invalid codepoint (u >= 0xd800 && 0xdfff >= u): %s"
+           bad_char)
+    | `Uchar _ -> assert false
     | `End -> List.rev acc
     | `Malformed s ->
       (* Handle malformed UTF-8 sequences *)
       failwith (Printf.sprintf "Malformed UTF-8 sequence: %S" s)
     | `Await -> assert false (* This case should not occur for a string input *)
   in
-  collect_codepoints []
+  collect_codepoints [] *)
+
+let string_to_codepoints str =
+  let rec decode_utf8 s pos acc =
+    if pos >= String.length s then List.rev acc
+    else
+      let c = Char.code (String.get s pos) in
+      let n =
+        if c < 0x80 then (1, c)
+        else if c < 0xE0 then (2, c land 0x1F)
+        else if c < 0xF0 then (3, c land 0x0F)
+        else (4, c land 0x07)
+      in
+      let bytes, value = n in
+      let code_point = ref value in
+      for i = 1 to bytes - 1 do
+        let next_byte = Char.code (String.get s (pos + i)) in
+        code_point := (!code_point lsl 6) lor (next_byte land 0x3F)
+      done;
+      decode_utf8 s (pos + bytes) (!code_point :: acc)
+  in
+  decode_utf8 str 0 []
+
+let check_valid_codepoints cs =
+  List.map
+    (fun c ->
+      if c < 0xd800 || (0xdfff < c && c < 0x110000) then c
+      else
+        let bad_char = Printf.sprintf "U+%04X" c in
+        CErrors.user_err
+          Pp.(str (Printf.sprintf "Invalid codepoint: %s" bad_char)))
+    cs
 
 let mk_char mkChar (c : int) =
   Constr.(mkApp (mkChar, [| mkInt (Uint63.of_int c) |]))
@@ -1023,12 +1074,14 @@ let mk_list list uinst ty l =
 
 let mk_string char string list char_uinst mkChar s =
   let codepoints =
-    try string_to_codepoints s
-    with Failure msg -> CErrors.user_err Pp.(str msg)
+    try check_valid_codepoints (string_to_codepoints s)
+    with Failure msg as exn ->
+      let _, info = Exninfo.capture exn in
+      CErrors.user_err ~info Pp.(str msg)
   in
   let chars = List.map (mk_char mkChar) codepoints in
   let ls = mk_list list char_uinst char chars in
-  Constr.(mkApp ((mkConstructU ((string, 1), UVars.Instance.empty)), [| ls |]))
+  Constr.(mkApp (mkConstructU ((string, 1), UVars.Instance.empty), [| ls |]))
 
 let lcnt = ref 0
 
@@ -1124,11 +1177,37 @@ let rec to_constr =
       in
       ret (nat_int nat double i)
     | String s ->
-      instantiate (N.append N.anon "Char") [] >>= fun char ->
-      (* let char, _ = Constr.destInd char in *)
+      (* instantiate (N.append N.anon "Char") [] >>= fun char -> *)
+      (* let (_, charu) = Constr.destInd char in *)
       instantiate (N.append N.anon "String") [] >>= fun string ->
       let string, _ = Constr.destInd string in
-      instantiate (N.append N.anon "List") [] >>= fun list ->
+      instantiate (N.append (N.append N.anon "String") "mk") []
+      >>= fun string_mk ->
+      get_uconv >>= fun uconv ->
+      let list, char =
+        with_env_evm env uconv
+          (fun env evd () ->
+            let ty =
+              Retyping.get_type_of env evd (EConstr.of_constr string_mk)
+            in
+            let _, list_char, _ = EConstr.destProd evd ty in
+            let list, char =
+              match EConstr.destApp evd list_char with
+              | list, [| char |] -> (list, char)
+              | _ ->
+                CErrors.user_err
+                  Pp.(
+                    str "Invalid type for string constructor: "
+                    ++ Printer.pr_type_env env evd (EConstr.to_constr evd ty)
+                    ++ str " ("
+                    ++ Printer.pr_type_env env evd
+                         (EConstr.to_constr evd list_char)
+                    ++ str " should be an application of list to char)")
+            in
+            (EConstr.to_constr evd list, EConstr.to_constr evd char))
+          ()
+      in
+      (* instantiate (N.append N.anon "List") [] >>= fun list -> *)
       let list, _ = Constr.destInd list in
       get_uconv >>= fun uconv ->
       let mkChar =

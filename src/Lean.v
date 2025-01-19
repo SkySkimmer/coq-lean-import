@@ -22,6 +22,17 @@ Inductive eq_inst1@{|} {α:SProp} (a:α) : α -> SProp
 
 Register eq_inst1 as lean.eq_inst1.
 
+(* Inductive List@{u Lean.u+1.0} (α : Type@{Lean.u+1.0}) : Type@{Lean.u+1.0} :=
+    List_nil : List@{u Lean.u+1.0} α
+  | List_cons : α -> List@{u Lean.u+1.0} α -> List@{u Lean.u+1.0} α. *)
+
+Monomorphic Universe set.
+Inductive List_inst1@{} (α : Type@{set}) : Type@{set} :=
+| List_nil_inst1 : List_inst1 α
+| List_cons_inst1 : α -> List_inst1 α -> List_inst1 α.
+
+Register List_inst1 as lean.List_inst1.
+
 Module Quot.
 
   Private Inductive quot@{u|} {α : Type@{u}} (r : α -> α -> SProp) : Type@{u}
