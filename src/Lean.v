@@ -11,6 +11,7 @@ Global Open Scope lean_scope.
 
 Global Set Definitional UIP.
 
+Cumulative
 Inductive eq@{u|} {α:Type@{u}} (a:α) : α -> SProp
   := eq_refl : eq a a.
 Notation "x = y" := (eq x y) : lean_scope.
