@@ -18,7 +18,7 @@ let __ () = assert false
 let invalid = Constr.(mkApp (mkSet, [| mkSet |]))
 
 let add_universe l ~lbound g =
-  let g = UGraph.add_universe l ~lbound:Set ~strict:false g in
+  let g = UGraph.add_universe l ~strict:false g in
   UGraph.enforce_constraint (lbound, Le, l) g
 
 let quickdef ~name ~types ~univs body =
