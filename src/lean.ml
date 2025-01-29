@@ -1467,7 +1467,7 @@ and declare_ind n { params; ty; ctors; univs } i =
           DeclareInd.declare_mutual_inductive_with_eliminations (entry finite)
             (* the ubinders API is kind of shit here *)
             (UState.Polymorphic_entry UContext.empty, UnivNames.empty_binders)
-            [] ~primitive_expected:(Option.has_some record)
+            []
         in
         let act () = try act BiFinite with e -> act Finite in
         if squashy.lean_squashes || not coq_squashes then act ()
