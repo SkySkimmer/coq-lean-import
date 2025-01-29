@@ -1403,7 +1403,7 @@ and declare_ind n { params; ty; ctors; univs } i =
                      (EConstr.of_constr cty)
                  in
                  let _, fields =
-                   List.fold_left_map
+                   CList.fold_left_map
                      (fun ids (na, t) ->
                        match na.Context.binder_name with
                        | Names.Anonymous -> (ids, (na, t))
