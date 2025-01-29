@@ -1481,7 +1481,7 @@ and declare_ind n { params; ty; ctors; univs } i =
         match record with
         | Some (Some _) ->
           let inhabitant_id = ind_name in
-          let projections_kind = Decls.StructureComponent in
+          let kind = Decls.StructureComponent in
           let proj_flags =
             List.map
               (fun _ ->
@@ -1496,14 +1496,9 @@ and declare_ind n { params; ty; ctors; univs } i =
               fields
           in
           let implfs = List.map (fun _ -> []) fields in
-          let fields =
-            List.map (fun (na, t) -> RelDecl.LocalAssum (na, t)) fields
-          in
-          let fields = EConstr.Unsafe.to_rel_context fields in
           ignore
-            (Record.Internal.declare_projections (mind, 0)
-               (Entries.Polymorphic_entry univs, UnivNames.empty_binders)
-               ~kind:projections_kind inhabitant_id proj_flags implfs fields)
+            (Record.Internal.declare_projections (mind, 0) ~kind ~inhabitant_id
+               proj_flags implfs)
         | _ -> ()
       in
       (mind, algs, ind_name, cnames, univs, squashy)
