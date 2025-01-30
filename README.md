@@ -9,13 +9,20 @@ Rocq work but probably not much beyond that.
 
 # How do I install this?
 
-This is a standard rocq makefile project.
+This is a standard rocq makefile project and can be installed with
+
+```sh
+opam install coq-lean-import
+```
 
 # How do I use this?
 
 You need Lean [exported files](https://github.com/leanprover/lean/blob/master/doc/export_format.md)
 as input.
-(I used Lean version 3.4.2, but this format looks pretty stable so other versions should work)
+
+For use with Lean 4, you can use [lean4export](https://github.com/leanprover/lean4export).
+
+For use with Lean 3, see [commit ce8ed08172d3247d992dacab08e0e8f59864a57b](https://github.com/SkySkimmer/coq-lean-import/commits/ce8ed08172d3247d992dacab08e0e8f59864a57b), which is compatible with Coq 8.20 and Lean 3, or [commit c513cee4f5edf8e8a06ba553ca58de5142cffde6](https://github.com/SkySkimmer/coq-lean-import/commits/c513cee4f5edf8e8a06ba553ca58de5142cffde6) which is compatible with Lean 3 and [coq/coq@a00be77](https://github.com/coq/coq/commit/a00be7706fad3eebbaec3d77ba2bb5cba516fb2b).
 
 For your convenience, I have uploaded a few examples:
 - [core.out](https://gist.githubusercontent.com/SkySkimmer/c8705b6d2d561ff7537d1dcabed371a0/raw/1538c7133d1334061e9ced67d3894d0b82cc83a4/core.out) (256KB)
