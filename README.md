@@ -1,29 +1,15 @@
 Alpha Announcement: Coq is a Lean Typechecker
 
-# Warning
-
-Currently in the process of converting to a plugin, use tag
-`lean-import-alpha1` at https://github.com/SkySkimmer/coq instead.
-
 # Introduction
 
-Presenting a custom version of Coq, extended with definitional UIP
-(using the version at https://github.com/coq/coq/pull/10390) and
-providing a brand new `Lean Import` command.
-
-It is available at https://github.com/SkySkimmer/coq/tree/coq-lean-import
+This plugin provides the `Lean Import` command.
 
 This is an experimental alpha, it is useful to compare how Lean and
-Coq work but probably not much beyond that.
-
-The `Lean Import` command itself can be implemented as a plugin (and
-will be once a few changes are upstreamed), but typechecking of Lean
-terms requires UIP.
+Rocq work but probably not much beyond that.
 
 # How do I install this?
 
-Use your favorite installation procedure for Coq, using
-https://github.com/SkySkimmer/coq/tree/coq-lean-import for the source.
+This is a standard rocq makefile project.
 
 # How do I use this?
 
