@@ -1,11 +1,11 @@
 MAKE_OPTS:= --no-builtin-rules
 
 .PHONY: submake
-submake: Makefile.coq
-	$(MAKE) $(MAKE_OPTS) -f Makefile.coq $(MAKECMDGOALS)
+submake: Makefile.rocq
+	$(MAKE) $(MAKE_OPTS) -f Makefile.rocq $(MAKECMDGOALS)
 
-Makefile.coq: _CoqProject
-	$(COQBIN)coq_makefile -f $< -o $@
+Makefile.rocq: _CoqProject
+	$(COQBIN)rocq makefile -f $< -o $@
 
 %:: submake ;
 
