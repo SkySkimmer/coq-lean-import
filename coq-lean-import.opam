@@ -12,6 +12,7 @@ description: """
 Plugin allowing Coq to import Lean exported files."""
 
 build: [make "-j%{jobs}%" "test"]
+run-test: [make "-j%{jobs}%"]
 install: [make "install"]
 depends: [
   "ocaml" {>= "4.09.0"}
