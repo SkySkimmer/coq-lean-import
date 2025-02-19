@@ -7,16 +7,16 @@ dev-repo: "git+https://github.com/coq-community/rocq-lean-import.git"
 bug-reports: "https://github.com/coq-community/rocq-lean-import/issues"
 license: "LGPL-2.1-only"
 
-synopsis: "Plugin allowing Coq to import Lean exported files"
+synopsis: "Plugin allowing Rocq to import Lean exported files"
 description: """
-Plugin allowing Coq to import Lean exported files."""
+Plugin allowing Rocq to import Lean exported files."""
 
-build: [make "-j%{jobs}%" "test"]
-run-test: [make "-j%{jobs}%"]
+build: [make "-j%{jobs}%"]
+run-test: [make "-j%{jobs}%" "test"]
 install: [make "install"]
 depends: [
   "ocaml" {>= "4.09.0"}
-  "coq" {= "dev"}
+  "rocq-core" {= "dev"}
 ]
 
 tags: [
