@@ -11,3 +11,5 @@ src/g_lean.ml
 *.vo*
 .merlin
 META*
+
+*.log.out

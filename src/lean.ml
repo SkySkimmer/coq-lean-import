@@ -14,7 +14,6 @@ open UVars
 module RelDecl = Context.Rel.Declaration
 
 let __ () = assert false
-
 let invalid = Constr.(mkApp (mkSet, [| mkSet |]))
 
 let add_universe l ~lbound g =
@@ -25,26 +24,20 @@ let quickdef ~name ~types ~univs body =
   let entry = Declare.definition_entry ?types ~univs body in
   let scope = Locality.(Global ImportDefaultBehavior) in
   let kind = Decls.(IsDefinition Definition) in
-  let uctx = UState.empty (* used for ubinders and hook *) in
+  let uctx =
+    UState.empty
+    (* used for ubinders and hook *)
+  in
   Declare.declare_entry ~name ~scope ~kind ~impargs:[] ~uctx entry
 
-type extended_level =
-  | Level of Level.t
-  | LSProp
+type extended_level = Level of Level.t | LSProp
 
-(** produce [args, recargs] inside mixed context [args/recargs]
-    [info] is in reverse order, ie the head is about the last arg in application order
+(** produce [args, recargs] inside mixed context [args/recargs] [info] is in
+    reverse order, ie the head is about the last arg in application order
 
-    examples:
-    [] -> [],[]
-    [false] -> [1],[]
-    [true] -> [2],[1]
-    [true;false] -> [3;2],[1]
-    [false;true] -> [3;1],[2]
-    [false;false] -> [2;1],[]
-    [true;true] -> [4;2],[3;1]
-
-*)
+    examples: [] -> [],[] [false] -> [1],[] [true] -> [2],[1] [true;false] ->
+    [3;2],[1] [false;true] -> [3;1],[2] [false;false] -> [2;1],[] [true;true] ->
+    [4;2],[3;1] *)
 let reorder_inside_core info =
   let rec aux i args recargs = function
     | [] -> (args, recargs)
@@ -79,29 +72,34 @@ let rec reorder_outside info hyps c =
     (Constr.mkProd (n, t, c), k + 1)
   | _ -> assert false
 
-(** produce [forall args recargs, P (C args)] from mixed [forall args/recargs, P (C args)] *)
+(** produce [forall args recargs, P (C args)] from mixed
+    [forall args/recargs, P (C args)] *)
 let reorder_outside info ft =
   let hyps, out = Term.decompose_prod ft in
   fst (reorder_outside (List.rev info) (List.rev hyps) out)
 
 exception Occur
+
 let occur_mind mind term =
-  let rec occur_rec c = match Constr.kind c with
-    | Constr.Ind ((mind',_),_) -> if MutInd.UserOrd.equal mind mind' then raise_notrace Occur
+  let rec occur_rec c =
+    match Constr.kind c with
+    | Constr.Ind ((mind', _), _) ->
+      if MutInd.UserOrd.equal mind mind' then raise_notrace Occur
     | _ -> Constr.iter occur_rec c
   in
-  try occur_rec term; true with Occur -> false
+  try
+    occur_rec term;
+    true
+  with Occur -> false
 
-(** Build the body of a Lean-style scheme. [u] instantiates the
-    inductive, [s] is [None] for the SProp scheme and [Some l]
-    for a scheme with motive [l].
+(** Build the body of a Lean-style scheme. [u] instantiates the inductive, [s]
+    is [None] for the SProp scheme and [Some l] for a scheme with motive [l].
 
     Lean schemes differ from Coq schemes:
-    - the motive universe is the first bound universe for Lean
-      but the last for Coq (handled by caller)
-    - Lean puts induction hypotheses after all the constructor arguments,
-      Coq puts them immediately after the corresponding recursive argument.
- *)
+    - the motive universe is the first bound universe for Lean but the last for
+      Coq (handled by caller)
+    - Lean puts induction hypotheses after all the constructor arguments, Coq
+      puts them immediately after the corresponding recursive argument. *)
 let lean_scheme env ~dep mind u s =
   let mib = Global.lookup_mind mind in
   let nparams = mib.mind_nparams in
@@ -113,14 +111,14 @@ let lean_scheme env ~dep mind u s =
 
   let body =
     let sigma = Evd.from_env env in
-    let sigma, s' = Evd.fresh_sort_in_family ~rigid:UnivRigid sigma
+    let sigma, s' =
+      Evd.fresh_sort_in_family ~rigid:UnivRigid sigma
         (if s = LSProp then InSProp else InType)
     in
     let sigma, body =
       Indrec.build_induction_scheme env sigma
         ((mind, 0), EConstr.EInstance.make u)
-        dep
-        s'
+        dep s'
     in
     let body = EConstr.Unsafe.to_constr body in
     let uctx = Evd.universe_context_set sigma in
@@ -129,9 +127,12 @@ let lean_scheme env ~dep mind u s =
       assert (ContextSet.is_empty uctx);
       body
     | Level s ->
-      assert (Level.Set.cardinal (fst uctx) = 1 && Constraints.is_empty (snd uctx));
+      assert (
+        Level.Set.cardinal (fst uctx) = 1 && Constraints.is_empty (snd uctx));
       let v = Level.Set.choose (fst uctx) in
-      Vars.subst_univs_level_constr (Sorts.QVar.Map.empty, Level.Map.singleton v s) body
+      Vars.subst_univs_level_constr
+        (Sorts.QVar.Map.empty, Level.Map.singleton v s)
+        body
   in
 
   assert (
@@ -144,8 +145,8 @@ let lean_scheme env ~dep mind u s =
         let args = CList.firstn nargs args in
         CList.map
           (fun arg ->
-             let t = RelDecl.get_type arg in
-             not (occur_mind mind t))
+            let t = RelDecl.get_type arg in
+            not (occur_mind mind t))
           args)
       mip.mind_nf_lc
   in
@@ -227,21 +228,15 @@ module RRange : sig
   (** Like Range.t, but instead of cons we append *)
 
   val empty : 'a t
-
   val length : 'a t -> int
-
   val append : 'a t -> 'a -> 'a t
-
   val get : 'a t -> int -> 'a
-
   val singleton : 'a -> 'a t
 end = struct
   type 'a t = { data : 'a Range.t; len : int }
 
   let empty = { data = Range.empty; len = 0 }
-
   let length x = x.len
-
   let append { data; len } x = { data = Range.cons x data; len = len + 1 }
 
   let get { data; len } i =
@@ -254,51 +249,56 @@ module LeanName : sig
   type t = private string list
 
   val anon : t
-
   val of_list : string list -> t [@@warning "-32"]
-
   val append : t -> string -> t
-
+  val append_list : t -> string list -> t
   val equal : t -> t -> bool
 
   val raw_append : t -> string -> t
   (** for private names *)
 
   val to_coq_string : t -> string
-
   val to_lean_string : t -> string
-
   val to_id : t -> Id.t
-
   val to_name : t -> Name.t
-
   val pp : t -> Pp.t
 
   module Set : CSet.S with type elt = t
-
   module Map : CMap.ExtS with type key = t and module Set := Set
 end = struct
   type t = string list
   (** "foo.bar.baz" is [baz;bar;foo] (like with dirpaths) *)
 
   let anon : t = []
-
   let of_list x = x
 
-  let append a b = b :: a
+  let toclean =
+    [
+      ('@', "__at__");
+      ('?', "__q");
+      ('!', "__B");
+      ('\\', "__bs");
+      ('/', "__fs");
+      ('^', "__v");
+      ('(', "__o");
+      (')', "__c");
+      (':', "__co");
+      ('=', "__eq");
+    ]
 
+  let clean_string s =
+    List.fold_left
+      (fun s (c, replace) -> String.concat replace (String.split_on_char c s))
+      (Unicode.ascii_of_ident s) toclean
+
+  let append a b = clean_string b :: a
+  let append_list a bs = List.append (List.rev_map clean_string bs) a
   let raw_append a b = match a with [] -> [ b ] | hd :: tl -> (hd ^ b) :: tl
-
   let to_id (x : t) = Id.of_string (String.concat "_" (List.rev x))
-
   let to_name x = if x = [] then Anonymous else Name (to_id x)
-
   let to_coq_string x = String.concat "_" (List.rev x)
-
   let to_lean_string x = String.concat "." (List.rev x)
-
   let pp x = Pp.(prlist_with_sep (fun () -> str ".") str) (List.rev x)
-
   let equal = CList.equal String.equal
 
   module Self = struct
@@ -327,16 +327,19 @@ let univ_of_sort = function
   | Set -> Some Universe.type0
   | Type u | QSort (_, u) -> Some u
 
-let sort_max (s1:Sorts.t) (s2:Sorts.t) = match s1, s2 with
-| (SProp, SProp) | (Prop, Prop) | (Set, Set) -> s1
-| (SProp, (Prop | Set | Type _ as s)) | ((Prop | Set | Type _) as s, SProp) -> s
-| (Prop, (Set | Type _ as s)) | ((Set | Type _) as s, Prop) -> s
-| (Set, Type u) | (Type u, Set) -> Sorts.sort_of_univ (Univ.Universe.sup Univ.Universe.type0 u)
-| (Type u, Type v) -> Sorts.sort_of_univ (Univ.Universe.sup u v)
-| (QSort _, _) | (_, QSort _) -> assert false
+let sort_max (s1 : Sorts.t) (s2 : Sorts.t) =
+  match (s1, s2) with
+  | SProp, SProp | Prop, Prop | Set, Set -> s1
+  | SProp, ((Prop | Set | Type _) as s) | ((Prop | Set | Type _) as s), SProp ->
+    s
+  | Prop, ((Set | Type _) as s) | ((Set | Type _) as s), Prop -> s
+  | Set, Type u | Type u, Set ->
+    Sorts.sort_of_univ (Univ.Universe.sup Univ.Universe.type0 u)
+  | Type u, Type v -> Sorts.sort_of_univ (Univ.Universe.sup u v)
+  | QSort _, _ | _, QSort _ -> assert false
 
-
-(** [map] goes from lean names to universes (in practice either SProp or a named level) *)
+(** [map] goes from lean names to universes (in practice either SProp or a named
+    level) *)
 let rec to_universe map = function
   | U.Prop -> Sorts.sprop
   | UNamed n -> sort_of_level (N.Map.get n map)
@@ -348,22 +351,22 @@ let rec to_universe map = function
 
 let rec do_n f x n = if n = 0 then x else do_n f (f x) (n - 1)
 
-(** in lean, imax(Prop+1,l)+1 <= max(Prop+1,l+1)
-   because:
-   - either l=Prop, so Prop+1 <= Prop+1
-   - or Prop+1 <= l so l+1 <= l+1
+(** in lean, imax(Prop+1,l)+1 <= max(Prop+1,l+1) because:
+    - either l=Prop, so Prop+1 <= Prop+1
+    - or Prop+1 <= l so l+1 <= l+1
 
-   to simulate this, each named level becomes > Set and we compute maxes accordingly
-*)
+    to simulate this, each named level becomes > Set and we compute maxes
+    accordingly *)
 
 let simplify_universe u =
   match Universe.repr u with
-  | (l, n) :: (l',n') :: rest when Level.is_set l ->
+  | (l, n) :: (l', n') :: rest when Level.is_set l ->
     if n <= n' + 1 || List.exists (fun (_, n') -> n <= n' + 1) rest then
       List.fold_left
         (fun u (l, n) ->
           Universe.sup u (do_n Universe.super (Universe.make l) n))
-        (do_n Universe.super (Universe.make l') n') rest
+        (do_n Universe.super (Universe.make l') n')
+        rest
     else u
   | _ -> u
 
@@ -382,15 +385,16 @@ let to_universe map u =
   let u = to_universe map u in
   simplify_sort u
 
-(** Map from [n] to the global level standing for [Set+n] (not including n=0). *)
+(** Map from [n] to the global level standing for [Set+n] (not including n=0).
+*)
 let sets : Level.t Int.Map.t ref =
   Summary.ref ~name:"lean-set-surrogates" Int.Map.empty
 
 type uconv = {
   map : extended_level N.Map.t;  (** Map from lean names to Coq universes *)
   levels : Level.t Universe.Map.t;
-      (** Map from algebraic universes to levels (only levels representing
-          an algebraic) *)
+      (** Map from algebraic universes to levels (only levels representing an
+          algebraic) *)
   graph : UGraph.t;
 }
 
@@ -399,8 +403,7 @@ let lean_id = Id.of_string "Lean"
 let { Goptions.get = lean_fancy_univs } =
   Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Fancy"; "Universes" ]
-    ~value:true
-    ()
+    ~value:true ()
 
 let level_of_universe_core u =
   let u =
@@ -421,7 +424,8 @@ let level_of_universe_core u =
       u
   in
   let s = (match u with [ _ ] -> "" | _ -> "max__") ^ String.concat "_" u in
-  Level.(make (UGlobal.make (DirPath.make [ Id.of_string_soft s; lean_id ]) "" 0))
+  Level.(
+    make (UGlobal.make (DirPath.make [ Id.of_string_soft s; lean_id ]) "" 0))
 
 let level_of_universe u =
   let u = Universe.repr u in
@@ -484,9 +488,9 @@ let to_univ_level u uconv =
         let graph =
           N.Map.fold
             (fun _ l' graph ->
-               match l' with
-               | LSProp -> graph
-               | Level l' -> update_graph (l, u) (l', Universe.make l') graph)
+              match l' with
+              | LSProp -> graph
+              | Level l' -> update_graph (l, u) (l', Universe.make l') graph)
             uconv.map graph
         in
         let uconv =
@@ -509,9 +513,11 @@ type expr =
       (** Let: undocumented in export_format.md *)
   | Lam of binder_kind * N.t * expr * expr
   | Pi of binder_kind * N.t * expr * expr
+  | Proj of N.t * int * expr  (** Proj: name of ind, field, term *)
+  | Nat of Z.t
+  | String of string
 
 type def = { ty : expr; body : expr; univs : N.t list; height : int }
-
 type ax = { ty : expr; univs : N.t list }
 
 type ind = {
@@ -525,9 +531,8 @@ type entry = Def of def | Ax of ax | Ind of ind | Quot
 
 (** Definitional height, used for unfolding heuristics.
 
-   The definitional height is the longest sequence of constant
-   unfoldings until we get a term without definitions (recursors don't
-   count). *)
+    The definitional height is the longest sequence of constant unfoldings until
+    we get a term without definitions (recursors don't count). *)
 let height entries =
   let rec h = function
     | Const (c, _) ->
@@ -539,6 +544,8 @@ let height entries =
     | Bound _ | Sort _ -> 0
     | Lam (_, _, a, b) | Pi (_, _, a, b) | App (a, b) -> max (h a) (h b)
     | Let { name = _; ty; v; rest } -> max (h ty) (max (h v) (h rest))
+    | Proj (_, _, c) -> h c
+    | Nat _ | String _ -> 0
   in
   h
 
@@ -550,13 +557,14 @@ type notation = {
   level : int;
   token : string;
 }
-[@@warning "-69"] (* not yet used *)
+[@@warning "-69"]
+(* not yet used *)
 
 type instantiation = {
   ref : GlobRef.t;
   algs : Universe.t list;
-      (** For each extra universe, produce the algebraic it corresponds to
-          (the initial universes are replaced by the appropriate Var) *)
+      (** For each extra universe, produce the algebraic it corresponds to (the
+          initial universes are replaced by the appropriate Var) *)
 }
 
 (*
@@ -581,20 +589,20 @@ Lean classifies inductives in the following way:
       -> squashed
       typically [exists]
 
-Additionally, the recursor is nondependent when the type is always Prop,
-otherwise dependent (including for sometimes-Prop types)
+Additionally, the recursor is always dependent (since Lean 4)
 (this implem detail isn't in the TTofLean paper)
 Special reduction also seems restricted to always-Prop types.
 
 NB: in practice (all stdlib and mathlib) the target universe is available without reduction
 (ie syntactic arity) even though the system doesn't require it.
 so we can just look at it directly (we don't want to implement a reduction system)
+Update: now we have correct Coq envs so we could reduce the Coq term?
 
 Difference with Coq:
 - a non-Prop instantiation of possibly Prop types will never be squashed
 - non squashed possibly-Prop types at a Prop instantiation are squashed
   (unless empty or uip branch)
-- we need uip branch for the special reduction.
+- we need uip for the special reduction.
   TTofLean sounds like we need an encoding with primitive records
   but testing indicates otherwise (all args in output type case).
 - we will always need unsafe flags for [Acc], and possibly for [and].
@@ -604,15 +612,21 @@ some other globals with Prop that won't actually be used
 (assuming the inductive is not used with all-Prop)
 This probably doesn't matter much, also if we start using upfront
 instantiations it won't matter at all.
+
+Primitive records:
+Lean autodetects all record-capable types as having primitive
+projections, and also autogenerates the eliminators.
+Squashed Props with 1 ctor have primitive projections up to the first non-Prop field.
 *)
 
 type squashy = {
   maybe_prop : bool;  (** used for optim, not fundamental *)
   always_prop : bool;
-      (** controls whether the lean eliminator is dependent (and
-              special reduction, but we just let Coq do its thing for that). *)
+      (** controls special reduction, but we just let Coq do its thing for that
+      *)
   lean_squashes : bool;
-      (** Self descriptive. We handle necessity of unsafe flags per-instantiation. *)
+      (** Self descriptive. We handle necessity of unsafe flags
+          per-instantiation. *)
 }
 
 let noprop = { maybe_prop = false; always_prop = false; lean_squashes = false }
@@ -620,8 +634,8 @@ let noprop = { maybe_prop = false; always_prop = false; lean_squashes = false }
 let pp_squashy { maybe_prop; always_prop; lean_squashes } =
   let open Pp in
   (if maybe_prop then
-   if always_prop then str "is always Prop" else str "may be Prop"
-  else str "is never Prop")
+     if always_prop then str "is always Prop" else str "may be Prop"
+   else str "is never Prop")
   ++ spc ()
   ++
   if lean_squashes then str "and is squashed by Lean"
@@ -645,7 +659,7 @@ let coq_squashes graph (entry : Entries.mutual_inductive_entry) =
     | _ :: _ :: _ -> true
     | [ c ] -> (match Constr.kind c with Rel _ | App _ -> false | _ -> true)
 
-let to_annot rels n t uconv =
+let with_env_evm rels uconv f x =
   (* In non upfront mode,
      because we interleave defining new constants as we encounter them,
      pushing rels and handling local universes,
@@ -654,8 +668,16 @@ let to_annot rels n t uconv =
   let env = Environ.set_rel_context_val rels env in
   let env = Environ.set_universes uconv.graph env in
   let evd = Evd.from_env env in
-  let r = Retyping.relevance_of_type env evd (EConstr.of_constr t) in
-  let r = EConstr.Unsafe.to_relevance r in
+  f env evd x
+
+let to_annot rels n t uconv =
+  let r =
+    with_env_evm rels uconv
+      (fun env evd r ->
+        let r = Retyping.relevance_of_type env evd r in
+        EConstr.Unsafe.to_relevance r)
+      (EConstr.of_constr t)
+  in
   Context.make_annot (N.to_name n) r
 
 (* bit n of [int_of_univs univs] is 1 iff [List.nth univs n] is SProp *)
@@ -663,11 +685,9 @@ let int_of_univs =
   let rec aux i acc = function
     | [] -> (i, acc)
     | u :: rest ->
-      match univ_of_sort u with
-      | None ->
-      aux ((i * 2) + 1) acc rest
-      | Some u ->
-      aux (i * 2) (u :: acc) rest
+      (match univ_of_sort u with
+      | None -> aux ((i * 2) + 1) acc rest
+      | Some u -> aux (i * 2) (u :: acc) rest)
   in
   fun l -> aux 0 [] (List.rev l)
 
@@ -694,7 +714,8 @@ let start_uconv univs i =
       let map, graph =
         if i mod 2 = 0 then
           let v = univ_of_name u in
-          (N.Map.add u (Level v) uconv.map, add_universe v ~lbound:set1 uconv.graph)
+          ( N.Map.add u (Level v) uconv.map,
+            add_universe v ~lbound:set1 uconv.graph )
         else (N.Map.add u LSProp uconv.map, uconv.graph)
       in
       aux { uconv with map; graph } (i / 2) univs
@@ -713,9 +734,7 @@ let univ_entry_gen { map; levels; graph } ounivs =
     CList.map_filter
       (fun u ->
         let v = N.Map.get u map in
-        match v with
-        | LSProp -> None
-        | Level v -> Some (u, v))
+        match v with LSProp -> None | Level v -> Some (u, v))
       ounivs
   in
   let ounivs, univs = List.split ounivs in
@@ -733,19 +752,23 @@ let univ_entry_gen { map; levels; graph } ounivs =
       let univs = List.rev univs in
       (univs, algs)
   in
-  let uset = List.fold_left (fun kept l -> Level.Set.add l kept) Level.Set.empty univs in
+  let uset =
+    List.fold_left (fun kept l -> Level.Set.add l kept) Level.Set.empty univs
+  in
   let kept = Level.Set.add Level.set uset in
   let kept = Int.Map.fold (fun _ -> Level.Set.add) !sets kept in
   let csts = UGraph.constraints_for ~kept graph in
   let csts =
-    Constraints.filter (fun (a, _, b) -> Level.Set.mem a uset || Level.Set.mem b uset) csts
+    Constraints.filter
+      (fun (a, _, b) -> Level.Set.mem a uset || Level.Set.mem b uset)
+      csts
   in
-  let unames = [||], Array.of_list (make_unames univs ounivs) in
+  let unames = ([||], Array.of_list (make_unames univs ounivs)) in
   let univs = Instance.of_array ([||], Array.of_list univs) in
   let uctx = UContext.make unames (univs, csts) in
   let subst = snd (make_instance_subst univs) in
   let algs = List.rev_map (subst_univs_level_universe subst) algs in
-  uctx, algs
+  (uctx, algs)
 
 let univ_entry a b =
   let uctx, algs = univ_entry_gen a b in
@@ -770,11 +793,11 @@ let name_for n i =
     let base = if i = 0 then base else Id.of_string (Id.to_string base ^ "_") in
     Namegen.next_global_ident_away base Id.Set.empty
 
-let get_predeclared_eq n i =
-  if N.equal n (N.append N.anon "eq") then
+let get_predeclared_ind indn n i =
+  if N.equal n (N.append_list N.anon indn) then
     let ind_name = name_for_core n i in
     let reg = "lean." ^ Id.to_string ind_name in
-    match Coqlib.lib_ref reg with
+    match Rocqlib.lib_ref reg with
     | IndRef (ind, 0) -> Some (ind_name, ind)
     | _ ->
       CErrors.user_err
@@ -785,11 +808,85 @@ let get_predeclared_eq n i =
     | exception _ -> None
   else None
 
-(** For each name, the instantiation with all non-sprop univs should
-   always be declared, but the instantiations with SProp may be lazily
-   declared. We expect small instance lengths (experimentally at most
-   4 in the stdlib) so we represent instantiations as bit fields, bit
-   n is 1 iff universe n is instantiated by SProp. *)
+let get_predeclared_def defn n i =
+  if N.equal n (N.append_list N.anon defn) then
+    let def_name = name_for_core n i in
+    let reg = "lean." ^ Id.to_string def_name in
+    match Rocqlib.lib_ref reg with
+    | ConstRef c -> Some (def_name, c)
+    | _ ->
+      CErrors.user_err
+        Pp.(
+          str "Bad registration for " ++ str reg ++ str " expected a constant.")
+    | exception _ -> None
+  else None
+
+type predeclared_ind_kind = Eq | Nat | Nat_le | Or | And | Fin | UInt32 | Char
+type predeclared_def_kind = UInt32_size | Nat_isValidChar
+
+let get_predeclared_cnames (k : predeclared_ind_kind) n =
+  match k with
+  | Eq -> [ N.append n "refl" ]
+  | Nat -> [ N.append n "zero"; N.append n "succ" ]
+  | Nat_le -> [ N.append n "refl"; N.append n "step" ]
+  | Or -> [ N.append n "inl"; N.append n "inr" ]
+  | And -> [ N.append n "intro" ]
+  | Fin -> [ N.append n "mk" ]
+  | UInt32 -> [ N.append n "mk" ]
+  | Char -> [ N.append n "mk" ]
+
+let get_predeclared_ind_any n i =
+  List.filter_map
+    (fun (indk, indh) ->
+      get_predeclared_ind indh n i |> Option.map (fun x -> (indk, indh, x)))
+    [
+      (Eq, [ "eq" ]);
+      (Nat, [ "Nat" ]);
+      (Nat_le, [ "Nat"; "le" ]);
+      (Or, [ "Or" ]);
+      (And, [ "And" ]);
+      (Fin, [ "Fin" ]);
+      (UInt32, [ "UInt32" ]);
+      (Char, [ "Char" ]);
+    ]
+
+let get_predeclared_ind_some n i =
+  match get_predeclared_ind_any n i with
+  | [] -> None
+  | [ x ] -> Some x
+  | _ :: _ :: _ ->
+    CErrors.user_err
+      Pp.(str "Multiple predeclared inductive types for " ++ N.pp n)
+
+let get_predeclared_def_any n i =
+  List.filter_map
+    (fun (defk, defh) ->
+      get_predeclared_def defh n i |> Option.map (fun x -> (defk, defh, x)))
+    [
+      (UInt32_size, [ "UInt32"; "size" ]);
+      (Nat_isValidChar, [ "Nat"; "isValidChar" ]);
+    ]
+
+let get_predeclared_def_some n i =
+  match get_predeclared_def_any n i with
+  | [] -> None
+  | [ x ] -> Some x
+  | _ :: _ :: _ ->
+    CErrors.user_err Pp.(str "Multiple predeclared constants for " ++ N.pp n)
+
+(* let get_predeclared_eq n i = get_predeclared_ind "eq" n i *)
+let mk_char_prim = "Char.mk.reflective_prim"
+
+(*
+Register Nat_isValidChar as lean.Nat_isValidChar.
+Register reflective_Char_mk_prim as lean.Char.mk.reflective_prim. *)
+let nat_double = "Nat_double"
+
+(** For each name, the instantiation with all non-sprop univs should always be
+    declared, but the instantiations with SProp may be lazily declared. We
+    expect small instance lengths (experimentally at most 4 in the stdlib) so we
+    represent instantiations as bit fields, bit n is 1 iff universe n is
+    instantiated by SProp. *)
 let declared : instantiation Int.Map.t N.Map.t ref =
   Summary.ref ~name:"lean-declared-instances" N.Map.empty
 
@@ -808,14 +905,188 @@ let add_declared n i inst =
 
 let to_univ_level' u uconv =
   match to_universe uconv.map u with
-  | SProp -> uconv, LSProp
+  | SProp -> (uconv, LSProp)
   | Type u | QSort (_, u) ->
     let uconv, u = to_univ_level u uconv in
-    uconv, Level u
-  | Set -> uconv, Level Level.set
+    (uconv, Level u)
+  | Set -> (uconv, Level Level.set)
   | Prop -> assert false
 
 let empty_env = Environ.empty_rel_context_val
+let default_proj_id = Id.of_string "default_proj_id"
+
+type error_mode = Skip | Stop | Fail
+
+let { Goptions.get = error_mode } =
+  let print = function Skip -> "Skip" | Stop -> "Stop" | Fail -> "Fail" in
+  let interp = function
+    | "Skip" -> Skip
+    | "Stop" -> Stop
+    | "Fail" -> Fail
+    | s ->
+      CErrors.user_err Pp.(str "Unknown error mode " ++ qstring s ++ str ".")
+  in
+  Goptions.declare_interpreted_string_option_and_ref ~stage:Interp
+    ~key:[ "Lean"; "Error"; "Mode" ]
+    ~value:Fail interp print ()
+
+exception MissingQuot
+
+let { Goptions.get = skip_missing_quot } =
+  Goptions.declare_bool_option_and_ref ~stage:Interp
+    ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
+    ~value:true ()
+
+let error_mode = function
+  | MissingQuot when skip_missing_quot () -> Skip
+  | _ -> error_mode ()
+
+module ZMap = CMap.Make (Z)
+
+let nat_ints = ref ZMap.empty
+let max_known_int = ref (Z.pred Z.zero)
+
+let one_more_int nat =
+  let i = Z.succ !max_known_int in
+  let c =
+    if Z.equal i Z.zero then Constr.mkConstructU ((nat, 1), UVars.Instance.empty)
+    else
+      let cpred = ZMap.get !max_known_int !nat_ints in
+      Constr.(
+        mkApp (mkConstructU ((nat, 2), UVars.Instance.empty), [| cpred |]))
+  in
+  nat_ints := ZMap.add i c !nat_ints;
+  max_known_int := i
+
+let max_nat_int = Z.of_string "5000"
+
+let nat_int_binary nat double i =
+  assert (Z.leq Z.zero i);
+  let rec to_binary z acc =
+    if Z.equal z Z.zero then acc
+    else
+      let bit = if Z.equal (Z.rem z (Z.of_int 2)) Z.zero then 0 else 1 in
+      to_binary (Z.div z (Z.of_int 2)) (bit :: acc)
+  in
+  let binary_representation = to_binary i [] in
+  let xO = Constr.mkConstructU ((nat, 1), UVars.Instance.empty) in
+  let xS = Constr.mkConstructU ((nat, 2), UVars.Instance.empty) in
+  let fS x = Constr.mkApp (xS, [| x |]) in
+  let fDouble x = Constr.mkApp (double, [| x |]) in
+  let rec construct_nat binary_list_rev =
+    match binary_list_rev with
+    | [] -> xO
+    | 0 :: rest ->
+      let rest_constr = construct_nat rest in
+      fDouble rest_constr
+    | 1 :: rest ->
+      let rest_constr = construct_nat rest in
+      fS (fDouble rest_constr)
+    | _ -> assert false
+  in
+  construct_nat (List.rev binary_representation)
+
+let nat_int nat double i =
+  assert (Z.leq Z.zero i);
+  if Z.leq max_nat_int i then nat_int_binary nat double i
+  else begin
+    while Z.lt !max_known_int i do
+      one_more_int nat
+    done;
+    ZMap.get i !nat_ints
+  end
+
+(* Decode a UTF-8 string into a list of valid codepoints, with error reporting for bad characters *)
+(* let string_to_codepoints s =
+  (* Create a UTF-8 decoder for the input string *)
+  let decoder = Uutf.decoder ~encoding:`UTF_8 (`String s) in
+
+  (* Define the condition for filtering codepoints *)
+  let is_valid_codepoint n = n < 0xd800 || (0xdfff < n && n < 0x110000) in
+
+  (* Decode the string and collect valid codepoints *)
+  let rec collect_codepoints acc =
+    match Uutf.decode decoder with
+    | `Uchar u when is_valid_codepoint (Uchar.to_int u) ->
+      collect_codepoints (Uchar.to_int u :: acc)
+    | `Uchar u when Uchar.to_int u >= 0x110000 ->
+      (* Raise an exception with the problematic character *)
+      let bad_char = Printf.sprintf "U+%04X" (Uchar.to_int u) in
+      failwith (Printf.sprintf "Invalid codepoint (>= 0x110000): %s" bad_char)
+    | `Uchar u when Uchar.to_int u >= 0xd800 && 0xdfff >= Uchar.to_int u ->
+      (* Raise an exception with the problematic character *)
+      let bad_char = Printf.sprintf "U+%04X" (Uchar.to_int u) in
+      failwith
+        (Printf.sprintf "Invalid codepoint (u >= 0xd800 && 0xdfff >= u): %s"
+           bad_char)
+    | `Uchar _ -> assert false
+    | `End -> List.rev acc
+    | `Malformed s ->
+      (* Handle malformed UTF-8 sequences *)
+      failwith (Printf.sprintf "Malformed UTF-8 sequence: %S" s)
+    | `Await -> assert false (* This case should not occur for a string input *)
+  in
+  collect_codepoints [] *)
+
+let string_to_codepoints str =
+  let rec decode_utf8 s pos acc =
+    if pos >= String.length s then List.rev acc
+    else
+      let c = Char.code (String.get s pos) in
+      let n =
+        if c < 0x80 then (1, c)
+        else if c < 0xE0 then (2, c land 0x1F)
+        else if c < 0xF0 then (3, c land 0x0F)
+        else (4, c land 0x07)
+      in
+      let bytes, value = n in
+      let code_point = ref value in
+      for i = 1 to bytes - 1 do
+        let next_byte = Char.code (String.get s (pos + i)) in
+        code_point := (!code_point lsl 6) lor (next_byte land 0x3F)
+      done;
+      decode_utf8 s (pos + bytes) (!code_point :: acc)
+  in
+  decode_utf8 str 0 []
+
+let check_valid_codepoints cs =
+  List.map
+    (fun c ->
+      if c < 0xd800 || (0xdfff < c && c < 0x110000) then c
+      else
+        let bad_char = Printf.sprintf "U+%04X" c in
+        CErrors.user_err
+          Pp.(str (Printf.sprintf "Invalid codepoint: %s" bad_char)))
+    cs
+
+let mk_char mkChar (c : int) =
+  Constr.(mkApp (mkChar, [| mkInt (Uint63.of_int c) |]))
+
+let mk_list list uinst ty l =
+  let cNil = Constr.(mkApp (mkConstructU ((list, 1), uinst), [| ty |])) in
+  let cCons = Constr.mkConstructU ((list, 2), uinst) in
+  let rec mk_list_rec l =
+    match l with
+    | [] -> cNil
+    | hd :: tl -> Constr.mkApp (cCons, [| ty; hd; mk_list_rec tl |])
+  in
+  mk_list_rec l
+
+let mk_string char string list char_uinst mkChar s =
+  let codepoints =
+    try check_valid_codepoints (string_to_codepoints s)
+    with Failure msg as exn ->
+      let _, info = Exninfo.capture exn in
+      CErrors.user_err ~info Pp.(str msg)
+  in
+  let chars = List.map (mk_char mkChar) codepoints in
+  let ls = mk_list list char_uinst char chars in
+  Constr.(mkApp (mkConstructU ((string, 1), UVars.Instance.empty), [| ls |]))
+
+let lcnt = ref 0
+
+let line_msg name =
+  Feedback.msg_info Pp.(str "line " ++ int !lcnt ++ str ": " ++ N.pp name)
 
 let rec to_constr =
   let open Constr in
@@ -823,34 +1094,133 @@ let rec to_constr =
     let uconv, x = x uconv in
     f x uconv
   in
+  let get_uconv uconv = (uconv, uconv) in
   let ret x uconv = (uconv, x) in
-  let to_annot env n t u = u, to_annot env n t u in
+  let to_annot env n t u = (u, to_annot env n t u) in
   let push_rel = Environ.push_rel_context_val in
   fun env -> function
-  | Bound i -> ret (mkRel (i + 1))
-  | Sort univ ->
-    to_univ_level' univ >>= fun u ->
-    ret (mkSort (sort_of_level u))
-  | Const (n, univs) -> instantiate n univs
-  | App (a, b) ->
-    to_constr env a >>= fun a ->
-    to_constr env b >>= fun b -> ret (mkApp (a, [| b |]))
-  | Let { name; ty; v; rest } ->
-    to_constr env ty >>= fun ty ->
-    to_annot env name ty >>= fun name ->
-    to_constr env v >>= fun v ->
-    to_constr (push_rel (LocalDef (name, v, ty)) env) rest >>= fun rest ->
-    ret (mkLetIn (name, v, ty, rest))
-  | Lam (_bk, n, a, b) ->
-    to_constr env a >>= fun a ->
-    to_annot env n a >>= fun n ->
-    to_constr (push_rel (LocalAssum (n, a)) env) b >>= fun b ->
-    ret (mkLambda (n, a, b))
-  | Pi (_bk, n, a, b) ->
-    to_constr env a >>= fun a ->
-    to_annot env n a >>= fun n ->
-    to_constr (push_rel (LocalAssum (n, a)) env) b >>= fun b ->
-    ret (mkProd (n, a, b))
+    | Bound i -> ret (mkRel (i + 1))
+    | Sort univ ->
+      to_univ_level' univ >>= fun u -> ret (mkSort (sort_of_level u))
+    | Const (n, univs) -> instantiate n univs
+    | App (a, b) ->
+      to_constr env a >>= fun a ->
+      to_constr env b >>= fun b -> ret (mkApp (a, [| b |]))
+    | Let { name; ty; v; rest } ->
+      to_constr env ty >>= fun ty ->
+      to_annot env name ty >>= fun name ->
+      to_constr env v >>= fun v ->
+      to_constr (push_rel (LocalDef (name, v, ty)) env) rest >>= fun rest ->
+      ret (mkLetIn (name, v, ty, rest))
+    | Lam (_bk, n, a, b) ->
+      to_constr env a >>= fun a ->
+      to_annot env n a >>= fun n ->
+      to_constr (push_rel (LocalAssum (n, a)) env) b >>= fun b ->
+      ret (mkLambda (n, a, b))
+    | Pi (_bk, n, a, b) ->
+      to_constr env a >>= fun a ->
+      to_annot env n a >>= fun n ->
+      to_constr (push_rel (LocalAssum (n, a)) env) b >>= fun b ->
+      ret (mkProd (n, a, b))
+    | Proj (lean_ind, field, c) ->
+      to_constr env c >>= fun c ->
+      get_uconv >>= fun uconv ->
+      (* we retype to get the ind, because otherwise we need the lean
+       univs for instantiation
+       This means we ignore the lean_ind in the Proj data. *)
+      let c =
+        with_env_evm env uconv
+          (fun env evd () ->
+            let tc = Retyping.get_type_of env evd (EConstr.of_constr c) in
+            let tc, args =
+              EConstr.decompose_app evd (Reductionops.whd_all env evd tc)
+            in
+            let ((ind, _) as indu) =
+              Constr.destInd (EConstr.Unsafe.to_constr tc)
+            in
+            let mib = Global.lookup_mind (fst ind) in
+            begin
+              match mib.mind_record with
+              | PrimRecord infos ->
+                let p, r =
+                  Declareops.inductive_make_projection ind mib ~proj_arg:field
+                in
+                (* unfolded?? *)
+                mkProj (Projection.make p false, r, c)
+              | NotRecord | FakeRecord ->
+                if
+                  mib.mind_packets.(snd ind).mind_relevance
+                  == EConstr.Unsafe.to_relevance EConstr.ERelevance.irrelevant
+                then
+                  CErrors.user_err
+                    Pp.(str "TODO projection for non record Prop inductive")
+                else
+                  CErrors.user_err
+                    Pp.(str "cannot project non record " ++ N.pp lean_ind)
+            end)
+          ()
+      in
+      ret c
+    | Nat i ->
+      (* [nat_ints] is not synchronized so ensure Nat is instantiated *)
+      instantiate (N.append N.anon "Nat") [] >>= fun nat ->
+      let nat, _ = Constr.destInd nat in
+      get_uconv >>= fun uconv ->
+      let double =
+        with_env_evm env uconv
+          (fun env evd () ->
+            let _, p =
+              Evd.fresh_global env evd (Rocqlib.lib_ref ("lean." ^ nat_double))
+            in
+            EConstr.to_constr evd p)
+          ()
+      in
+      ret (nat_int nat double i)
+    | String s ->
+      (* instantiate (N.append N.anon "Char") [] >>= fun char -> *)
+      (* let (_, charu) = Constr.destInd char in *)
+      instantiate (N.append N.anon "String") [] >>= fun string ->
+      let string, _ = Constr.destInd string in
+      instantiate (N.append (N.append N.anon "String") "mk") []
+      >>= fun string_mk ->
+      get_uconv >>= fun uconv ->
+      let list, char =
+        with_env_evm env uconv
+          (fun env evd () ->
+            let ty =
+              Retyping.get_type_of env evd (EConstr.of_constr string_mk)
+            in
+            let _, list_char, _ = EConstr.destProd evd ty in
+            let list, char =
+              match EConstr.destApp evd list_char with
+              | list, [| char |] -> (list, char)
+              | _ ->
+                CErrors.user_err
+                  Pp.(
+                    str "Invalid type for string constructor: "
+                    ++ Printer.pr_type_env env evd (EConstr.to_constr evd ty)
+                    ++ str " ("
+                    ++ Printer.pr_type_env env evd
+                         (EConstr.to_constr evd list_char)
+                    ++ str " should be an application of list to char)")
+            in
+            (EConstr.to_constr evd list, EConstr.to_constr evd char))
+          ()
+      in
+      (* instantiate (N.append N.anon "List") [] >>= fun list -> *)
+      let list, _ = Constr.destInd list in
+      get_uconv >>= fun uconv ->
+      let mkChar =
+        with_env_evm env uconv
+          (fun env evd () ->
+            let _, mkChar =
+              Evd.fresh_global env evd
+                (Rocqlib.lib_ref ("lean." ^ mk_char_prim))
+            in
+            EConstr.to_constr evd mkChar)
+          ()
+      in
+      ret (mk_string char string list UVars.Instance.empty mkChar s)
 
 and instantiate n univs uconv =
   assert (List.length univs < Sys.int_size);
@@ -859,9 +1229,10 @@ and instantiate n univs uconv =
   let i, univs = int_of_univs univs in
   let inst = ensure_exists n i in
   let subst l =
-    let u = match Level.var_index l with
-    | None -> Universe.make l
-    | Some n -> List.nth univs n
+    let u =
+      match Level.var_index l with
+      | None -> Universe.make l
+      | Some n -> List.nth univs n
     in
     Some u
   in
@@ -884,22 +1255,43 @@ and ensure_exists n i =
        asking for the inductive type? *)
     (* if i = 0 then CErrors.user_err Pp.(N.pp n ++ str " was not instantiated!"); *)
     (* assert (not (upfront_instances ())); *)
-    (match N.Map.get n !entries with
+    (match N.Map.find n !entries with
     | Def def -> declare_def n def i
     | Ax ax -> declare_ax n ax i
     | Ind ind -> declare_ind n ind i
-    | Quot -> CErrors.user_err Pp.(str "quot must be predeclared"))
+    | Quot -> CErrors.user_err Pp.(str "quot must be predeclared")
+    | exception Not_found -> CErrors.user_err Pp.(str "missing " ++ N.pp n))
 
 and declare_def n { ty; body; univs; height } i =
-  let uconv = start_uconv univs i in
-  let uconv, ty = to_constr empty_env ty uconv in
-  let uconv, body = to_constr empty_env body uconv in
-  let univs, algs = univ_entry uconv univs in
-  let ref = try quickdef ~name:(name_for n i) ~types:(Some ty) ~univs body
-    with e ->
-      let e = Exninfo.capture e in
-      Feedback.msg_info Pp.(str "Failed with" ++ fnl() ++ Printer.pr_constr_env (Global.env()) (Evd.from_env (Global.env())) body ++ fnl() ++ str ": " ++ Printer.pr_constr_env (Global.env()) (Evd.from_env (Global.env())) ty);
-      Exninfo.iraise e
+  let ref, algs =
+    match get_predeclared_def_some n i with
+    | Some ((UInt32_size | Nat_isValidChar), _, (def_name, c)) ->
+      (* Hack to let the user predeclare some constants
+         TODO make a more general Register-like API? *)
+      Feedback.msg_info Pp.(Id.print def_name ++ str " is predeclared");
+      (GlobRef.ConstRef c, [])
+    | None ->
+      let uconv = start_uconv univs i in
+      let uconv, ty = to_constr empty_env ty uconv in
+      let uconv, body = to_constr empty_env body uconv in
+      let univs, algs = univ_entry uconv univs in
+      let ref =
+        try quickdef ~name:(name_for n i) ~types:(Some ty) ~univs body
+        with e ->
+          let e = Exninfo.capture e in
+          Feedback.msg_info
+            Pp.(
+              str "Failed with" ++ fnl ()
+              ++ Printer.pr_constr_env (Global.env ())
+                   (Evd.from_env (Global.env ()))
+                   body
+              ++ fnl () ++ str ": "
+              ++ Printer.pr_constr_env (Global.env ())
+                   (Evd.from_env (Global.env ()))
+                   ty);
+          Exninfo.iraise e
+      in
+      (ref, algs)
   in
   let () =
     let c = match ref with ConstRef c -> c | _ -> assert false in
@@ -926,19 +1318,19 @@ and declare_ax n { ty; univs } i =
 and to_params uconv params =
   let acc, params =
     CList.fold_left_map
-      (fun (env,uconv) (_bk, p, ty) ->
-         let uconv, ty = to_constr env ty uconv in
-         let d = RelDecl.LocalAssum (to_annot env p ty uconv, ty) in
-         let env = Environ.push_rel_context_val d env in
-         ((env,uconv), d))
-      (empty_env,uconv) params
+      (fun (env, uconv) (_bk, p, ty) ->
+        let uconv, ty = to_constr env ty uconv in
+        let d = RelDecl.LocalAssum (to_annot env p ty uconv, ty) in
+        let env = Environ.push_rel_context_val d env in
+        ((env, uconv), d))
+      (empty_env, uconv) params
   in
   (acc, List.rev params)
 
 and declare_ind n { params; ty; ctors; univs } i =
   let mind, algs, ind_name, cnames, univs, squashy =
-    match get_predeclared_eq n i with
-    | Some (ind_name, mind) ->
+    match get_predeclared_ind_some n i with
+    | Some (Eq, _, (ind_name, mind)) ->
       (* Hack to let the user predeclare eq and quot before running Lean Import
          TODO make a more general Register-like API? *)
       Feedback.msg_info Pp.(Id.print ind_name ++ str " is predeclared");
@@ -949,29 +1341,41 @@ and declare_ind n { params; ty; ctors; univs } i =
       let univs =
         match i with
         | 0 ->
-          UContext.make ([||], [| Name (Id.of_string "u") |])
+          UContext.make
+            ([||], [| Name (Id.of_string "u") |])
             ( Instance.of_array ([||], [| univ_of_name (N.append N.anon "u") |]),
               Constraints.empty )
         | 1 -> UContext.empty
         | _ -> assert false
       in
       (mind, [], ind_name, [ cname ], univs, squashy)
+    | Some
+        ( ((Nat | Nat_le | Or | And | Fin | UInt32 | Char) as k),
+          _,
+          (ind_name, mind) ) ->
+      (* Hack to let the user predeclare various types before running Lean Import
+         TODO make a more general Register-like API? *)
+      (* this case is for the ones without universes*)
+      Feedback.msg_info Pp.(Id.print ind_name ++ str " is predeclared");
+      let cnames = get_predeclared_cnames k n in
+      let squashy = N.Map.get n !squash_info in
+      (mind, [], ind_name, cnames, UContext.empty, squashy)
     | None ->
       let uconv = start_uconv univs i in
-      let (env_params,uconv), params = to_params uconv params in
+      let (env_params, uconv), params = to_params uconv params in
       let uconv, ty = to_constr env_params ty uconv in
-      let _, sort =
+      let indices, sort =
         let env_params =
           Environ.set_rel_context_val env_params
             (Environ.set_universes uconv.graph (Global.env ()))
         in
         Reduction.dest_arity env_params ty
       in
-      let env_ind = Environ.push_rel_context_val
+      let env_ind =
+        Environ.push_rel_context_val
           (LocalAssum
-             ((Context.make_annot (N.to_name n)
-                 (Sorts.relevance_of_sort sort)),
-              Term.it_mkProd_or_LetIn ty params))
+             ( Context.make_annot (N.to_name n) (Sorts.relevance_of_sort sort),
+               Term.it_mkProd_or_LetIn ty params ))
           empty_env
       in
       let env_ind_params =
@@ -989,11 +1393,57 @@ and declare_ind n { params; ty; ctors; univs } i =
       let graph = uconv.graph in
       let univs, algs = univ_entry_gen uconv univs in
       let ind_name = name_for n i in
-      let entry =
+      let record, fields, ctys =
+        match (indices, ctys) with
+        | [], [ cty ] ->
+          cty
+          |> with_env_evm env_ind_params uconv (fun env evm cty ->
+                 let fields, codom =
+                   Reductionops.whd_decompose_prod env evm
+                     (EConstr.of_constr cty)
+                 in
+                 let _, fields =
+                   CList.fold_left_map
+                     (fun ids (na, t) ->
+                       match na.Context.binder_name with
+                       | Names.Anonymous -> (ids, (na, t))
+                       | Names.Name id ->
+                         let id = Namegen.next_global_ident_away id ids in
+                         let ids = Id.Set.add id ids in
+                         line_msg
+                           (N.of_list
+                              [
+                                Names.Id.to_string id;
+                                "(field)";
+                                Names.Id.to_string ind_name;
+                              ]);
+                         (ids, ({ na with binder_name = Names.Name id }, t)))
+                     (Id.Set.add ind_name Id.Set.empty)
+                     fields
+                 in
+                 let cty' = EConstr.it_mkProd codom fields in
+                 let cty' = EConstr.Unsafe.to_constr cty' in
+                 match (fields, Sorts.is_sprop sort) with
+                 | [], true -> (None, [], ctys)
+                 | _ :: _, false ->
+                   (Some (Some [| default_proj_id |]), fields, [ cty' ])
+                 | [], false -> (None, [], ctys)
+                 | _ :: _, true ->
+                   if
+                     List.for_all
+                       (fun (na, _) ->
+                         na.Context.binder_relevance
+                         == EConstr.ERelevance.irrelevant)
+                       fields
+                   then (Some (Some [| default_proj_id |]), fields, [ cty' ])
+                   else (None, [], ctys))
+        | _ -> (None, [], ctys)
+      in
+      let entry finite =
         {
           Entries.mind_entry_params = params;
-          mind_entry_record = None;
-          mind_entry_finite = Finite;
+          mind_entry_record = record;
+          mind_entry_finite = finite;
           mind_entry_inds =
             [
               {
@@ -1010,21 +1460,47 @@ and declare_ind n { params; ty; ctors; univs } i =
       in
       let squashy = N.Map.get n !squash_info in
       let coq_squashes =
-        if squashy.maybe_prop then coq_squashes graph entry else false
+        if squashy.maybe_prop then coq_squashes graph (entry Finite) else false
       in
       let mind =
-        let act () =
-          DeclareInd.declare_mutual_inductive_with_eliminations entry
+        let act finite =
+          DeclareInd.declare_mutual_inductive_with_eliminations (entry finite)
             (* the ubinders API is kind of shit here *)
-            (UState.Polymorphic_entry UContext.empty,UnivNames.empty_binders)
+            (UState.Polymorphic_entry UContext.empty, UnivNames.empty_binders)
             []
         in
+        let act () = try act BiFinite with e -> act Finite in
         if squashy.lean_squashes || not coq_squashes then act ()
         else with_unsafe_univs act ()
       in
       assert (
         squashy.lean_squashes
         || (Global.lookup_mind mind).mind_packets.(0).mind_squashed == None);
+      (* Declare projections if the inductive is a record *)
+      let () =
+        match record with
+        | Some (Some _) ->
+          let inhabitant_id = ind_name in
+          let kind = Decls.StructureComponent in
+          let proj_flags =
+            List.map
+              (fun _ ->
+                {
+                  Record.Internal.pf_coercion = false;
+                  pf_reversible = false;
+                  pf_instance = false;
+                  pf_priority = None;
+                  pf_locality = Goptions.OptDefault;
+                  pf_canonical = false;
+                })
+              fields
+          in
+          let implfs = List.map (fun _ -> []) fields in
+          ignore
+            (Record.Internal.declare_projections (mind, 0) ~kind ~inhabitant_id
+               proj_flags implfs)
+        | _ -> ()
+      in
       (mind, algs, ind_name, cnames, univs, squashy)
   in
 
@@ -1044,70 +1520,84 @@ and declare_ind n { params; ty; ctors; univs } i =
     let u =
       if fam = Sorts.InSProp then LSProp
       else
-      let u = if lean_fancy_univs () then
-          let u = DirPath.make [ Id.of_string "motive"; lean_id ] in
-          Level.(make (UGlobal.make u "" 0))
-        else UnivGen.fresh_level ()
-      in
-      Level u
+        let u =
+          if lean_fancy_univs () then
+            let u = DirPath.make [ Id.of_string "motive"; lean_id ] in
+            Level.(make (UGlobal.make u "" 0))
+          else UnivGen.fresh_level ()
+        in
+        Level u
     in
     let env = Environ.push_context ~strict:true univs (Global.env ()) in
     let env =
       match u with
       | LSProp -> env
-      | Level u -> Environ.push_context_set ~strict:false (ContextSet.singleton u) env
+      | Level u ->
+        Environ.push_context_set ~strict:false (ContextSet.singleton u) env
     in
     let inst, uentry =
       let inst = UContext.instance univs in
       let csts = UContext.constraints univs in
       let qnames, unames = UContext.names univs in
-      let uentry = match u with
+      let uentry =
+        match u with
         | LSProp -> UState.Polymorphic_entry univs
         | Level u ->
           UState.Polymorphic_entry
-            (UContext.make (qnames, Array.append [| Name (Id.of_string "motive") |] unames)
+            (UContext.make
+               (qnames, Array.append [| Name (Id.of_string "motive") |] unames)
                ( Instance.of_array
                    ([||], Array.append [| u |] (snd (Instance.to_array inst))),
-                 csts ) )
+                 csts ))
       in
-      ( inst, uentry )
+      (inst, uentry)
     in
-    (lean_scheme env ~dep:(not squashy.always_prop) mind inst u, uentry)
+    (* lean 4 change: always dep? was not squashy.always_prop*)
+    (lean_scheme env ~dep:true mind inst u, uentry)
   in
   let nrec = N.append n "rec" in
   let elims =
     if squashy.lean_squashes then [ ("_indl", Sorts.InSProp) ]
     else [ ("_recl", InType); ("_indl", InSProp) ]
   in
+
+  let declare_one_scheme (suffix, sort) =
+    let id = Id.of_string (Id.to_string ind_name ^ suffix) in
+    let body, uentry = make_scheme sort in
+    let elim =
+      quickdef ~name:id ~types:None
+        ~univs:(uentry, UnivNames.empty_binders)
+        body
+      (* TODO implicits? *)
+    in
+    (* TODO AFAICT Lean reduces recursors eagerly, but ofc only when applied to a ctor
+       Can we simulate that with strategy better than by leaving them at the default strat? *)
+    let liftu l =
+      let u =
+        match Level.var_index l with
+        | None -> Universe.make l (* Set *)
+        | Some i -> Universe.make (Level.var (i + 1))
+      in
+      Some u
+    in
+    let algs =
+      if sort = InSProp then algs
+      else List.map (UnivSubst.subst_univs_universe liftu) algs
+    in
+    let elim = { ref = elim; algs } in
+    let j =
+      if squashy.lean_squashes then i
+      else if sort == InType then 2 * i
+      else (2 * i) + 1
+    in
+    add_declared nrec j elim
+  in
   let () =
     List.iter
-      (fun (suffix, sort) ->
-        let id = Id.of_string (Id.to_string ind_name ^ suffix) in
-        let body, uentry = make_scheme sort in
-        let elim =
-          quickdef ~name:id ~types:None ~univs:(uentry, UnivNames.empty_binders) body
-          (* TODO implicits? *)
-        in
-        (* TODO AFAICT Lean reduces recursors eagerly, but ofc only when applied to a ctor
-           Can we simulate that with strategy better than by leaving them at the default strat? *)
-        let liftu l =
-          let u = match Level.var_index l with
-          | None -> Universe.make l (* Set *)
-          | Some i -> Universe.make (Level.var (i + 1))
-          in
-          Some u
-        in
-        let algs =
-          if sort = InSProp then algs
-          else List.map (UnivSubst.subst_univs_universe liftu) algs
-        in
-        let elim = { ref = elim; algs } in
-        let j =
-          if squashy.lean_squashes then i
-          else if sort == InType then 2 * i
-          else (2 * i) + 1
-        in
-        add_declared nrec j elim)
+      (fun x ->
+        try declare_one_scheme x
+        with e when CErrors.noncritical e && error_mode e = Skip ->
+          Feedback.msg_info Pp.(str "Skipping scheme"))
       elims
   in
   inst
@@ -1118,7 +1608,7 @@ let squashify n { params; ty; ctors; univs } =
     (* NB: if univs = [] this is just instantiation 0 *)
     start_uconv univs ((1 lsl List.length univs) - 1)
   in
-  let (env_paramsP,uconvP), paramsP = to_params uconvP params in
+  let (env_paramsP, uconvP), paramsP = to_params uconvP params in
   let uconvP, tyP = to_constr env_paramsP ty uconvP in
   let envP =
     Environ.push_rel_context paramsP
@@ -1128,7 +1618,7 @@ let squashify n { params; ty; ctors; univs } =
   if not (Sorts.is_sprop sortP) then noprop
   else
     let uconvT = start_uconv univs 0 in
-    let (env_paramsT,uconvT), paramsT = to_params uconvT params in
+    let (env_paramsT, uconvT), paramsT = to_params uconvT params in
     let uconvT, tyT = to_constr env_paramsT ty uconvT in
     let envT =
       Environ.set_rel_context_val env_paramsT
@@ -1142,12 +1632,13 @@ let squashify n { params; ty; ctors; univs } =
     | [ (_, ctor) ] ->
       let envT =
         Context.Rel.fold_outside Environ.push_rel_context_val paramsT
-          ~init:(Environ.push_rel_context_val
-                   (LocalAssum
-                      (Context.make_annot (N.to_name n)
-                         (Sorts.relevance_of_sort sortT),
-                       Term.it_mkProd_or_LetIn tyT paramsT))
-                   empty_env)
+          ~init:
+            (Environ.push_rel_context_val
+               (LocalAssum
+                  ( Context.make_annot (N.to_name n)
+                      (Sorts.relevance_of_sort sortT),
+                    Term.it_mkProd_or_LetIn tyT paramsT ))
+               empty_env)
       in
       let uconvT, ctorT = to_constr envT ctor uconvT in
       let envT =
@@ -1214,7 +1705,7 @@ let declare_quot () =
               "lean." ^ N.to_lean_string lean
               ^ if i = 0 then "" else "_inst" ^ string_of_int i
             in
-            let ref = Coqlib.lib_ref reg in
+            let ref = Rocqlib.lib_ref reg in
             let () = add_declared lean i { ref; algs = [] } in
             loop (i + 1)
         in
@@ -1223,10 +1714,8 @@ let declare_quot () =
   in
   Feedback.msg_info Pp.(str "quot registered")
 
-exception MissingQuot
-
 let declare_quot () =
-  if Coqlib.has_ref "lean.quot" then declare_quot () else raise MissingQuot
+  if Rocqlib.has_ref "lean.quot" then declare_quot () else raise MissingQuot
 
 let do_bk = function
   | "#BD" -> NotImplicit
@@ -1278,8 +1767,8 @@ let rec do_ctors state nctors acc l =
       do_ctors state (nctors - 1) ((name, ty) :: acc) rest
     | _ -> CErrors.user_err Pp.(str "Not enough constructors")
 
-(** Replace [n] (meant to be an the inductive type appearing in the
-    constructor type) by (Bound k). *)
+(** Replace [n] (meant to be an the inductive type appearing in the constructor
+    type) by (Bound k). *)
 let rec replace_ind ind k = function
   | Const (n', _) when N.equal ind n' -> Bound k
   | (Const _ | Bound _ | Sort _) as e -> e
@@ -1296,6 +1785,8 @@ let rec replace_ind ind k = function
     Lam (bk, name, replace_ind ind k a, replace_ind ind (k + 1) b)
   | Pi (bk, name, a, b) ->
     Pi (bk, name, replace_ind ind k a, replace_ind ind (k + 1) b)
+  | Proj (n, field, c) -> Proj (n, field, replace_ind ind k c)
+  | (Nat _ | String _) as x -> x
 
 let rec pop_params npar ty =
   if npar = 0 then ([], ty)
@@ -1315,8 +1806,7 @@ let as_univ state s = RRange.get state.univs (int_of_string s)
 let { Goptions.get = just_parse } =
   Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Just"; "Parsing" ]
-    ~value:false
-    ()
+    ~value:false ()
 
 (* with this off: best line 23000 in stdlib
    stack overflow
@@ -1326,14 +1816,12 @@ let { Goptions.get = just_parse } =
 let { Goptions.get = upfront_instances } =
   Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Upfront"; "Instantiation" ]
-    ~value:false
-    ()
+    ~value:false ()
 
 let { Goptions.get = lazy_instances } =
   Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Lazy"; "Instantiation" ]
-    ~value:false
-    ()
+    ~value:false ()
 
 let declare_instances act univs =
   let stop = if upfront_instances () then 1 lsl List.length univs else 1 in
@@ -1365,10 +1853,16 @@ let add_entry n entry =
   in
   entries := N.Map.add n entry !entries
 
-let lcnt = ref 0
+let parse_hexa c =
+  if 'A' <= c && c <= 'F' then int_of_char c - int_of_char 'A'
+  else begin
+    assert ('0' <= c && c <= '9');
+    int_of_char c - int_of_char '0'
+  end
 
-let line_msg name =
-  Feedback.msg_info Pp.(str "line " ++ int !lcnt ++ str ": " ++ N.pp name)
+let parse_char s =
+  assert (String.length s = 2);
+  Char.chr ((parse_hexa s.[0] * 16) + parse_hexa s.[1])
 
 let do_line state l =
   (* Lean printing strangeness: sometimes we get double spaces (typically with INFIX) *)
@@ -1425,7 +1919,11 @@ let do_line state l =
         Pp.(
           str "bad notation: " ++ prlist_with_sep (fun () -> str "; ") str rest))
   | next :: rest ->
-    let next = int_of_string next in
+    let next =
+      try int_of_string next
+      with Failure _ ->
+        CErrors.user_err Pp.(str "Unknown start of line " ++ str next)
+    in
     let state =
       match rest with
       | [ "#NS"; base; cons ] ->
@@ -1467,9 +1965,9 @@ let do_line state l =
         let u = as_univ state u in
         { state with exprs = RRange.append state.exprs (Sort u) }
       | "#EC" :: n :: univs ->
+        let n = get_name state n in
         assert (next = RRange.length state.exprs);
-        let n = get_name state n
-        and univs = List.map (as_univ state) univs in
+        let univs = List.map (as_univ state) univs in
         { state with exprs = RRange.append state.exprs (Const (n, univs)) }
       | [ "#EA"; a; b ] ->
         assert (next = RRange.length state.exprs);
@@ -1500,6 +1998,21 @@ let do_line state l =
         and ty = get_expr state ty
         and body = get_expr state body in
         { state with exprs = RRange.append state.exprs (Pi (bk, n, ty, body)) }
+      | [ "#EJ"; ind; field; term ] ->
+        let ind = get_name state ind
+        and field = int_of_string field
+        and term = get_expr state term in
+        {
+          state with
+          exprs = RRange.append state.exprs (Proj (ind, field, term));
+        }
+      | [ "#ELN"; n ] ->
+        let n = Z.of_string n in
+        { state with exprs = RRange.append state.exprs (Nat n) }
+      | "#ELS" :: bytes ->
+        let s = Seq.map parse_char (List.to_seq bytes) in
+        let s = String.of_seq s in
+        { state with exprs = RRange.append state.exprs (String s) }
       | _ ->
         CErrors.user_err
           Pp.(str "cannot understand " ++ str l ++ str "." ++ fnl ())
@@ -1514,41 +2027,7 @@ let rec is_arity = function
 let { Goptions.get = print_squashes } =
   Goptions.declare_bool_option_and_ref
     ~key:[ "Lean"; "Print"; "Squash"; "Info" ]
-    ~value:false
-    ()
-
-let { Goptions.get = skip_missing_quot } =
-  Goptions.declare_bool_option_and_ref
-    ~key:[ "Lean"; "Skip"; "Missing"; "Quotient" ]
-    ~value:true
-    ()
-
-type error_mode =
-  | Skip
-  | Stop
-  | Fail
-
-let { Goptions.get = error_mode } =
-  let print = function
-    | Skip -> "Skip"
-    | Stop -> "Stop"
-    | Fail -> "Fail"
-  in
-  let interp = function
-    | "Skip" -> Skip
-    | "Stop" -> Stop
-    | "Fail" -> Fail
-    | s -> CErrors.user_err Pp.(str "Unknown error mode " ++ qstring s ++ str ".")
-  in
-  Goptions.declare_interpreted_string_option_and_ref
-    ~key:["Lean";"Error";"Mode"]
-    ~value:Fail
-    interp print
-    ()
-
-let error_mode = function
-  | MissingQuot when skip_missing_quot () -> Skip
-  | _ -> error_mode ()
+    ~value:false ()
 
 let finish state =
   let max_univs, cnt =
@@ -1583,8 +2062,8 @@ let finish state =
       ++ int (N.Map.cardinal !entries)
       ++ str " entries (" ++ int cnt ++ str " possible instances)"
       ++ (if N.Map.exists (fun _ x -> Quot == x) !entries then
-          str " (including quot)."
-         else str ".")
+            str " (including quot)."
+          else str ".")
       ++ fnl () ++ str "- "
       ++ int (RRange.length state.univs)
       ++ str " universe expressions"
@@ -1594,7 +2073,7 @@ let finish state =
       ++ int (RRange.length state.exprs)
       ++ str " expression nodes" ++ fnl ()
       ++ (if state.skips > 0 then str "Skipped " ++ int state.skips ++ fnl ()
-         else mt ())
+          else mt ())
       ++ str "Max universe instance length "
       ++ int max_univs ++ str "." ++ fnl () ++ int nonarities
       ++ str " inductives have non syntactically arity types."
@@ -1640,14 +2119,11 @@ let do_line state l =
   | exception e ->
     let e = Exninfo.capture e in
     (if fst e <> TimedOut then
-     let t1 = System.get_time () in
-     prtime t0 t1);
+       let t1 = System.get_time () in
+       prtime t0 t1);
     Exninfo.iraise e
 
-
-
 let before_from = function None -> false | Some from -> !lcnt < from
-
 let freeze () = (Lib.Interp.freeze (), Summary.Interp.freeze_summaries ())
 
 let unfreeze (lib, sum) =
@@ -1686,19 +2162,18 @@ let rec do_input state ~from ~until ch =
         | exception e ->
           let e = Exninfo.capture e in
           let epp =
-              Pp.(str "Error at line " ++ int !lcnt
-                  ++ str " (for " ++ N.pp n ++ str ")"
-                  ++ str (": " ^ l)
-                  ++ fnl () ++ CErrors.iprint e)
+            Pp.(
+              str "Error at line " ++ int !lcnt ++ str " (for " ++ N.pp n
+              ++ str ")"
+              ++ str (": " ^ l)
+              ++ fnl () ++ CErrors.iprint e)
           in
           unfreeze st;
           (* without this unfreeze, the global state.declared and the
              global env are out of sync *)
-          match error_mode (fst e) with
+          (match error_mode (fst e) with
           | Skip ->
-            Feedback.msg_info
-              Pp.(
-                str "Skipping: " ++ epp);
+            Feedback.msg_info Pp.(str "Skipping: " ++ epp);
             incr lcnt;
             do_input { state with skips = state.skips + 1 } ~from ~until ch
           | Stop ->
@@ -1709,12 +2184,12 @@ let rec do_input state ~from ~until ch =
           | Fail ->
             close_in ch;
             finish state;
-            CErrors.user_err epp))
+            CErrors.user_err epp)))
 
 let pstate = Summary.ref ~name:"lean-parse-state" empty_state
 
 let lean_obj =
-  let cache (pstatev,setsv,declaredv,entriesv,squash_infov) =
+  let cache (pstatev, setsv, declaredv, entriesv, squash_infov) =
     pstate := pstatev;
     sets := setsv;
     declared := declaredv;
@@ -1723,15 +2198,18 @@ let lean_obj =
     ()
   in
   let open Libobject in
-  declare_object {
-    (default_object "LEAN-IMPORT-STATE") with
-    cache_function = cache;
-    load_function = (fun _ v -> cache v);
-    classify_function = (fun _ -> Keep);
-  }
+  declare_object
+    {
+      (default_object "LEAN-IMPORT-STATE") with
+      cache_function = cache;
+      load_function = (fun _ v -> cache v);
+      classify_function = (fun _ -> Keep);
+    }
 
 let import ~from ~until f =
   lcnt := 1;
   (* silence the definition messages from Coq *)
-  let pstatev = (Flags.silently (fun () -> do_input !pstate ~from ~until (open_in f)) ()) in
+  let pstatev =
+    Flags.silently (fun () -> do_input !pstate ~from ~until (open_in f)) ()
+  in
   Lib.add_leaf (lean_obj (pstatev, !sets, !declared, !entries, !squash_info))
